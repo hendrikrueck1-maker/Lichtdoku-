@@ -91,11 +91,13 @@
     box-shadow:0 8px 24px rgba(109,94,248,.5);z-index:40;}
 
   /* Card grid (overview) */
+  html{scroll-snap-type:y proximity;}
   .grid{display:grid;grid-template-columns:1fr;gap:18px;}
   @media(min-width:640px){ .grid{grid-template-columns:1fr 1fr;} }
 
   .card{background:#fdfdfd;color:#111;border:1px solid #e2e2e2;border-left:6px solid transparent;
-    border-radius:14px;position:relative;overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,.35);}
+    border-radius:14px;position:relative;overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,.35);
+    scroll-snap-align:start;scroll-margin-top:74px;}
   .card.kat-aufbau{border-left-color:var(--kat-aufbau);}
   .card.kat-einleuchten{border-left-color:var(--kat-einleuchten);}
   .cat-badge{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.65);color:#fff;font-size:10px;
@@ -104,8 +106,10 @@
   .cat-badge.kat-einleuchten{background:var(--kat-einleuchten);}
   .print-doc-header{display:none;}
   .card-images{display:flex;flex-direction:column;}
-  .img-wrap{width:100%;aspect-ratio:1/1;background:#e8e8e8;display:flex;align-items:center;justify-content:center;
+  .img-wrap{width:100%;margin:0 auto;aspect-ratio:1/1;background:#e8e8e8;display:flex;align-items:center;justify-content:center;
     border-top:1px solid #ccc;overflow:hidden;position:relative;}
+  .card-images.count-1 .img-wrap{width:min(100%, 58vh);}
+  .card-images.count-2 .img-wrap{width:min(100%, 38vh);}
   .img-wrap img{width:100%;height:100%;object-fit:cover;display:block;}
   .img-del{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.65);color:#fff;border:none;
     border-radius:50%;width:32px;height:32px;font-size:15px;z-index:4;padding:0;line-height:1;}
@@ -246,7 +250,7 @@
 
 <script>
 /* ===================== Version & Updates ===================== */
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 function registerServiceWorker(){
   if(!('serviceWorker' in navigator)) return;
@@ -790,10 +794,10 @@ function sortEntries(entries){
   const mode = state.sortMode || 'standard';
   if(mode === 'standard'){
     // Grundsätzlich: erst alle Aufbau-Kreise, dann alle Einleuchten-Kreise,
-    // innerhalb jeder Gruppe Kreisnummer groß → klein.
+    // innerhalb jeder Gruppe Kreisnummer klein → groß.
     return entries.slice().sort((a,b)=>
       kategorieRank(a) - kategorieRank(b) ||
-      kreisSortValue(b.kreis) - kreisSortValue(a.kreis) ||
+      kreisSortValue(a.kreis) - kreisSortValue(b.kreis) ||
       (a.createdAt - b.createdAt)
     );
   }
@@ -822,11 +826,11 @@ function renderOverviewBody(show){
   html += '</div></div>';
   html += '<div class="toolbar">';
   html += '<button class="btn-ok" onclick="exportPDF()">📄 PDF-Export</button>';
-  html += '<button onclick="shareShowSummary()">📤 Teilen (Text)</button>';
+  html += '<button onclick="shareShowSummary()">📤 Teilen (Fotos+Infos)</button>';
   html += '<button onclick="exportJSON()">💾 Backup (JSON)</button>';
   html += '</div>';
   html += '<div class="sort-row"><select onchange="setSort(this.value)">';
-  html += '<option value="standard" '+(state.sortMode==='standard'?'selected':'')+'>Standard (Aufbau → Einleuchten, Kreis groß→klein)</option>';
+  html += '<option value="standard" '+(state.sortMode==='standard'?'selected':'')+'>Standard (Aufbau → Einleuchten, Kreis klein→groß)</option>';
   html += '<option value="kreis-asc" '+(state.sortMode==='kreis-asc'?'selected':'')+'>Kreis: niedrig → hoch</option>';
   html += '<option value="kreis-desc" '+(state.sortMode==='kreis-desc'?'selected':'')+'>Kreis: hoch → niedrig</option>';
   html += '<option value="eingabe" '+(state.sortMode==='eingabe'?'selected':'')+'>Eingabe-Reihenfolge</option>';
@@ -1033,7 +1037,9 @@ function exportPDF(){
   let html = '';
   entries.forEach(e=>{ html += cardTemplate(e, {editable:false, docHeader:headerText}); });
   byId('printArea').innerHTML = html;
-  setTimeout(()=>{ window.print(); }, 100);
+  // WICHTIG: window.print() muss synchron im Klick-Handler laufen – ein setTimeout/await
+  // davor lässt iOS Safari die Nutzer-Geste verfallen und der Druckdialog öffnet sich nicht.
+  window.print();
 }
 
 /* ===================== Teilen ===================== */
@@ -1071,14 +1077,26 @@ async function shareEntry(id){
 async function shareShowSummary(){
   const show = loadShows().find(s=>s.id===state.showId);
   const entries = getVisibleEntries(show);
+  if(entries.length === 0){ toast('Keine Einträge zum Teilen'); return; }
   let text = show.name + (show.date? ' ('+show.date+')' : '') + '\n\n';
+  const files = [];
   entries.forEach(e=>{
     text += '['+(e.kategorie||'Einleuchten')+'] Kreis: '+(e.kreis||'-')+' | Filter: '+(e.filter||'-')+
       (e.adresse? ' | Adresse: '+e.adresse : '') + (e.bemerkung? ' | '+e.bemerkung : '') + '\n';
+    if(e.bild1) files.push(dataURLtoFile(e.bild1, 'kreis_'+(e.kreis||'x')+'_1.jpg'));
+    if(e.bild2) files.push(dataURLtoFile(e.bild2, 'kreis_'+(e.kreis||'x')+'_2.jpg'));
   });
   try{
-    if(navigator.share){ await navigator.share({title:show.name, text:text}); }
-    else { await navigator.clipboard.writeText(text); toast('Zusammenfassung kopiert'); }
+    if(navigator.canShare && files.length && navigator.canShare({files})){
+      // Mit Fotos teilen (z.B. AirDrop, Mail, WhatsApp) – bei sehr vielen Bildern
+      // kann das Betriebssystem die Anzahl begrenzen; dann lieber den PDF-Export nutzen.
+      await navigator.share({files:files, title:show.name, text:text});
+    } else if(navigator.share){
+      await navigator.share({title:show.name, text:text});
+    } else {
+      await navigator.clipboard.writeText(text);
+      toast('Zusammenfassung kopiert');
+    }
   }catch(err){}
 }
 

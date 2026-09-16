@@ -1,6 +1,6 @@
 // Lichtdoku Service Worker
 // Version wird bei jedem Release hier UND in index.html (APP_VERSION) UND in version.json erhöht.
-const SW_VERSION = 'v1.0.0';
+const SW_VERSION = 'v1.1.0';
 const CACHE_NAME = 'lichtdoku-cache-' + SW_VERSION;
 
 const ASSETS = [

@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0c10">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<title>Lichtdoku</title>
+<style>
+  :root{
+    --bg:#0b0c10; --bg2:#12141a; --card-dark:#1a1d24; --card-dark2:#20242d; --border:#2b2f3a;
+    --text:#f4f5f7; --muted:#8b92a3;
+    --accent2:#6d5ef8; --accent2-dark:#5b4de0;
+    --ok:#10b981; --danger:#ef4444;
+    --kat-aufbau:#0ea5e9; --kat-einleuchten:#f5a524;
+    --radius:16px; --radius-sm:11px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    -webkit-tap-highlight-color:transparent;}
+  #app{min-height:100vh;padding-bottom:100px;}
+  button{font-family:inherit;cursor:pointer;border:none;border-radius:var(--radius-sm);
+    padding:11px 16px;font-size:15px;font-weight:600;background:var(--card-dark);color:var(--text);
+    transition:transform .12s ease, opacity .12s ease, background .15s ease;}
+  button:active{transform:scale(.96);opacity:.85;}
+  input,textarea{font-family:inherit;font-size:16px;background:var(--card-dark);
+    color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px 12px;width:100%;}
+  textarea{resize:vertical;min-height:70px;}
+  label{display:block;font-size:11px;color:var(--muted);margin:16px 0 6px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;}
+
+  /* Top bar (scrollt normal mit, ist NICHT fixiert) */
+  .topbar{background:var(--bg2);
+    display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 14px 12px;
+    border-bottom:1px solid var(--border);}
+  .topbar h1{font-size:19px;font-weight:700;margin:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .topbar .sub{font-size:12px;color:var(--muted);margin-top:1px;}
+  .iconbtn{background:transparent;color:var(--text);padding:8px 10px;font-size:19px;border-radius:var(--radius-sm);}
+  .tb-row{width:100%;display:flex;align-items:center;gap:8px;}
+  .mode-toggle{display:flex;gap:4px;width:100%;background:var(--card-dark);border-radius:999px;padding:4px;}
+  .mode-toggle button{flex:1;background:transparent;color:var(--muted);font-size:13px;padding:9px;
+    border-radius:999px;}
+  .mode-toggle button.active{background:var(--accent2);color:#fff;
+    box-shadow:0 3px 10px rgba(109,94,248,.4);}
+
+  .content{padding:14px 14px 100px;max-width:900px;margin:0 auto;}
+
+  /* Home: show list */
+  .show-item{background:var(--card-dark);border:1px solid var(--border);border-radius:var(--radius);
+    padding:16px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+  .show-item .meta{flex:1;min-width:0;}
+  .show-item .name{font-size:16px;font-weight:700;}
+  .show-item .count{font-size:12px;color:var(--muted);margin-top:3px;}
+  .show-actions{display:flex;gap:6px;flex-shrink:0;}
+  .btn-primary{background:var(--accent2);color:#fff;box-shadow:0 4px 14px rgba(109,94,248,.35);}
+  .btn-danger{background:rgba(239,68,68,.12);color:var(--danger);border:1px solid rgba(239,68,68,.35);}
+  .btn-ok{background:var(--ok);color:#fff;box-shadow:0 4px 14px rgba(16,185,129,.3);}
+  .empty-hint{color:var(--muted);text-align:center;padding:48px 20px;font-size:14px;line-height:1.6;}
+  .fab-row{display:flex;gap:10px;margin-bottom:18px;}
+  .fab-row button{flex:1;}
+
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+  .toolbar button{flex:1;min-width:110px;}
+
+  .search-box{margin-bottom:14px;}
+  .sticky-bar{position:sticky;top:0;z-index:15;background:var(--bg);
+    margin:0 -14px 14px;padding:10px 14px;border-bottom:1px solid var(--border);}
+  .cat-tabs{display:flex;gap:6px;background:var(--card-dark);border-radius:999px;padding:4px;}
+  .cat-tabs button{flex:1;background:transparent;color:var(--muted);font-size:13px;padding:9px 6px;
+    border-radius:999px;}
+  .cat-tabs button.active{background:var(--accent2);color:#fff;box-shadow:0 3px 10px rgba(109,94,248,.4);}
+  .cat-tabs button.active.kat-aufbau{background:var(--kat-aufbau);box-shadow:0 3px 10px rgba(14,165,233,.4);}
+  .cat-tabs button.active.kat-einleuchten{background:var(--kat-einleuchten);box-shadow:0 3px 10px rgba(245,165,36,.4);}
+  .sort-row{margin-bottom:14px;}
+  .sort-row select{width:100%;}
+  .section-head{padding:7px 14px;margin:4px 0 2px;border-radius:999px;font-size:12px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.04em;color:#fff;grid-column:1/-1;width:fit-content;}
+  .section-head.kat-aufbau{background:var(--kat-aufbau);}
+  .section-head.kat-einleuchten{background:var(--kat-einleuchten);}
+
+  /* Floating Action Button: Neuer Kreis (nur im Bearbeitungsmodus) */
+  .fab{position:fixed;right:calc(18px + env(safe-area-inset-right));
+    bottom:calc(18px + env(safe-area-inset-bottom));width:60px;height:60px;border-radius:50%;
+    background:var(--accent2);color:#fff;font-size:30px;line-height:1;padding:0;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 8px 24px rgba(109,94,248,.5);z-index:40;}
+
+  /* Card grid (overview) */
+  .grid{display:grid;grid-template-columns:1fr;gap:18px;}
+  @media(min-width:640px){ .grid{grid-template-columns:1fr 1fr;} }
+
+  .card{background:#fdfdfd;color:#111;border:1px solid #e2e2e2;border-left:6px solid transparent;
+    border-radius:14px;position:relative;overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,.35);}
+  .card.kat-aufbau{border-left-color:var(--kat-aufbau);}
+  .card.kat-einleuchten{border-left-color:var(--kat-einleuchten);}
+  .cat-badge{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.65);color:#fff;font-size:10px;
+    padding:4px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:.03em;z-index:3;font-weight:700;}
+  .cat-badge.kat-aufbau{background:var(--kat-aufbau);}
+  .cat-badge.kat-einleuchten{background:var(--kat-einleuchten);}
+  .print-doc-header{display:none;}
+  .card-images{display:flex;flex-direction:column;}
+  .img-wrap{width:100%;aspect-ratio:1/1;background:#e8e8e8;display:flex;align-items:center;justify-content:center;
+    border-top:1px solid #ccc;overflow:hidden;position:relative;}
+  .img-wrap img{width:100%;height:100%;object-fit:cover;display:block;}
+  .img-del{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.65);color:#fff;border:none;
+    border-radius:50%;width:32px;height:32px;font-size:15px;z-index:4;padding:0;line-height:1;}
+  .card-footer{width:100%;border-collapse:collapse;font-size:12px;border-top:1px solid #e2e2e2;}
+  .card-footer td{border:1px solid #eee;padding:8px 9px;vertical-align:top;}
+  .card-footer td b{display:block;font-size:10px;color:#8a8a8a;text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px;font-weight:700;}
+  .card-editrow{display:flex;gap:6px;padding:10px;background:#f4f4f4;}
+  .card-editrow button{flex:1;font-size:12.5px;padding:9px 6px;border-radius:10px;}
+
+  /* Entry form */
+  .photo-btns{display:flex;gap:10px;}
+  .photo-slot{flex:1;text-align:center;}
+  .photo-slot .preview{width:100%;aspect-ratio:1/1;background:var(--card-dark);border:1px dashed var(--border);
+    border-radius:var(--radius);display:flex;align-items:center;justify-content:center;overflow:hidden;
+    margin-bottom:6px;position:relative;}
+  .photo-slot .preview img{width:100%;height:100%;object-fit:cover;}
+  .photo-slot .preview .plus{font-size:34px;color:var(--muted);}
+  .photo-slot-btns{display:flex;flex-direction:column;gap:6px;}
+  .photo-slot-btns button{width:100%;font-size:13px;padding:9px;}
+  .cam-live-btn{background:transparent;border:1px dashed var(--border);color:var(--muted);
+    font-size:12px !important;padding:6px !important;}
+  .tag-row{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 2px;}
+  .tag{background:var(--card-dark);border:1px solid var(--border);border-radius:999px;
+    padding:7px 14px;font-size:13px;color:var(--text);font-weight:500;}
+  .cat-choice{flex:1;text-align:center;border-radius:999px;}
+  .cat-choice.active.kat-aufbau{background:var(--kat-aufbau);color:#fff;border-color:transparent;}
+  .cat-choice.active.kat-einleuchten{background:var(--kat-einleuchten);color:#fff;border-color:transparent;}
+  .form-actions{display:flex;gap:10px;margin-top:24px;}
+  .form-actions button{flex:1;padding:14px;font-size:16px;}
+
+  /* Print: jeder Kreis bekommt genau eine eigene Seite, Bilder möglichst groß & quadratisch */
+  #printArea{display:none;}
+  @media print{
+    body *{visibility:hidden;}
+    #printArea, #printArea *{visibility:visible;}
+    #printArea{display:block !important;position:absolute;left:0;top:0;width:100%;}
+    #printArea .cat-badge{display:none;}
+    #printArea .print-doc-header{display:block;font-size:10px;color:#666;text-transform:uppercase;
+      letter-spacing:.04em;text-align:center;border-bottom:1px solid #ccc;padding-bottom:2mm;
+      margin-bottom:3mm;flex:0 0 auto;}
+    #printArea .card{
+      width:100%;box-sizing:border-box;box-shadow:none;border:none;border-radius:0;margin:0;
+      display:flex;flex-direction:column;
+      page-break-after:always;break-after:page;
+      page-break-inside:avoid;break-inside:avoid;
+    }
+    #printArea .card:last-child{ page-break-after:auto; break-after:auto; }
+    #printArea .card-title{flex:0 0 auto;font-size:20px;padding:0 0 4mm;}
+    #printArea .card-images{flex:1;display:flex;flex-direction:column;justify-content:center;
+      align-items:center;gap:6mm;}
+    #printArea .card-images .img-wrap{flex:0 0 auto;aspect-ratio:auto;border-top:none;margin:0 auto;}
+    /* Ein Bild pro Kreis: möglichst groß, quadratisch */
+    #printArea .card-images.count-1 .img-wrap{width:180mm;height:180mm;}
+    /* Zwei Bilder pro Kreis: beide untereinander, groß & quadratisch */
+    #printArea .card-images.count-2 .img-wrap{width:118mm;height:118mm;}
+    #printArea .card-footer{flex:0 0 auto;margin-top:5mm;font-size:11px;}
+    @page{ size:A4; margin:8mm; }
+  }
+  .hidden{display:none !important;}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+    background:#333;color:#fff;padding:10px 18px;border-radius:20px;font-size:13px;
+    z-index:99;opacity:0;transition:opacity .25s;pointer-events:none;}
+  .toast.show{opacity:1;}
+
+  /* Update-Banner (Versionsprüfung) */
+  .update-banner{position:fixed;top:0;left:0;right:0;z-index:500;background:var(--accent2);color:#fff;
+    display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;
+    padding-top:calc(10px + env(safe-area-inset-top));font-size:13px;font-weight:600;
+    box-shadow:0 4px 16px rgba(0,0,0,.35);}
+  .update-banner.hidden{display:none;}
+  .update-banner .ub-text{flex:1;min-width:0;}
+  .update-banner button{padding:7px 13px;font-size:12.5px;background:rgba(255,255,255,.22);color:#fff;flex-shrink:0;}
+  .update-dismiss{background:transparent !important;padding:6px 8px !important;font-size:15px !important;}
+  .version-tag{text-align:center;color:var(--muted);font-size:11px;margin-top:26px;padding-bottom:10px;}
+
+  /* Zoom-Lightbox für Fotos */
+  .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:250;
+    display:flex;align-items:center;justify-content:center;touch-action:none;overflow:hidden;}
+  .lightbox.hidden{display:none;}
+  .lightbox img{max-width:100vw;max-height:100vh;touch-action:none;user-select:none;
+    -webkit-user-drag:none;transform-origin:0 0;}
+  .lb-close{position:absolute;top:14px;right:16px;color:#fff;font-size:24px;z-index:6;
+    padding:8px 14px;background:rgba(255,255,255,.14);border-radius:50%;line-height:1;}
+  .lb-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.14);
+    color:#fff;border:none;font-size:32px;width:50px;height:64px;border-radius:10px;z-index:6;
+    line-height:1;padding:0;}
+  .lb-prev{left:8px;} .lb-next{right:8px;}
+  .lb-info{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.65);color:#fff;
+    padding:10px 16px calc(10px + env(safe-area-inset-bottom));font-size:13px;text-align:center;z-index:5;}
+  .lb-info b{color:#ffcf7d;}
+  .lb-info .lb-sub{opacity:.75;font-size:11px;margin-top:2px;}
+
+  /* Live-Kamera mit 1:1-Vorschau */
+  .camera-overlay{position:fixed;inset:0;background:#000;z-index:300;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px;}
+  .camera-overlay.hidden{display:none;}
+  .camera-overlay video{width:min(88vw,60vh);aspect-ratio:1/1;object-fit:cover;
+    border:2px solid #fff;border-radius:8px;background:#111;}
+  .camera-hint{color:#ccc;font-size:12px;text-align:center;}
+  .camera-controls{display:flex;align-items:center;gap:24px;}
+  .cam-shutter{width:64px;height:64px;border-radius:50%;background:#fff;border:4px solid #999;
+    font-size:0;padding:0;}
+  .cam-cancel,.cam-switch{background:transparent;color:#fff;border:1px solid #666;
+    padding:8px 14px;border-radius:20px;font-size:13px;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="printArea"></div>
+<input type="file" id="fileInput1" accept="image/*" capture="environment" class="hidden">
+<input type="file" id="fileInput2" accept="image/*" capture="environment" class="hidden">
+<input type="file" id="jsonImportInput" accept="application/json" class="hidden">
+<div id="toast" class="toast"></div>
+
+<div id="updateBanner" class="update-banner hidden">
+  <span class="ub-text">Update verfügbar<span id="updateVersionLabel"></span></span>
+  <button onclick="applyUpdate()">Aktualisieren</button>
+  <button class="update-dismiss" onclick="dismissUpdateBanner()">✕</button>
+</div>
+
+<div id="cameraOverlay" class="camera-overlay hidden">
+  <video id="cameraVideo" autoplay playsinline muted></video>
+  <div class="camera-hint">Motiv im Quadrat positionieren</div>
+  <div class="camera-controls">
+    <button class="cam-cancel" onclick="closeCamera()">✕ Abbrechen</button>
+    <button class="cam-shutter" onclick="captureFromCamera()">⚪</button>
+    <button class="cam-switch" onclick="switchCamera()">🔄</button>
+  </div>
+</div>
+
+<div id="lightbox" class="lightbox hidden">
+  <span class="lb-close" onclick="closeLightbox()">✕</span>
+  <button class="lb-nav lb-prev" onclick="lbNav(-1)">‹</button>
+  <button class="lb-nav lb-next" onclick="lbNav(1)">›</button>
+  <img id="lightboxImg" src="" draggable="false">
+  <div id="lbInfo" class="lb-info"></div>
+</div>
+
+<script>
+/* ===================== Version & Updates ===================== */
+const APP_VERSION = '1.0.0';
+
+function registerServiceWorker(){
+  if(!('serviceWorker' in navigator)) return;
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  });
+}
+
+async function checkForUpdate(manual){
+  try{
+    const res = await fetch('./version.json', {cache:'no-store'});
+    const data = await res.json();
+    if(data.version && data.version !== APP_VERSION){
+      showUpdateBanner(data.version);
+      if(manual) toast('Update gefunden: v'+data.version);
+    } else if(manual){
+      toast('Du nutzt bereits die aktuelle Version (v'+APP_VERSION+')');
+    }
+  }catch(err){
+    if(manual) toast('Update-Prüfung fehlgeschlagen (offline?)');
+  }
+}
+function showUpdateBanner(newVersion){
+  byId('updateVersionLabel').textContent = ' (v'+newVersion+')';
+  byId('updateBanner').classList.remove('hidden');
+}
+function dismissUpdateBanner(){
+  byId('updateBanner').classList.add('hidden');
+}
+async function applyUpdate(){
+  try{
+    if('serviceWorker' in navigator){
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for(const r of regs){ await r.unregister(); }
+    }
+    if('caches' in window){
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k=>caches.delete(k)));
+    }
+  }catch(err){}
+  location.href = location.pathname + '?_=' + Date.now();
+}
+function initVersionCheck(){
+  checkForUpdate(false);
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState === 'visible') checkForUpdate(false);
+  });
+}
+
+/* ===================== Datenhaltung ===================== */
+function loadShows(){ try{ return JSON.parse(localStorage.getItem('ld_shows')||'[]'); }catch(e){ return []; } }
+function saveShows(s){ localStorage.setItem('ld_shows', JSON.stringify(s)); }
+function loadEntries(showId){ try{ return JSON.parse(localStorage.getItem('ld_entries_'+showId)||'[]'); }catch(e){ return []; } }
+function saveEntries(showId, e){ localStorage.setItem('ld_entries_'+showId, JSON.stringify(e)); }
+
+/* ===================== State ===================== */
+let state = { view:'home', showId:null, showTab:'overview', editId:null, search:'',
+  mode:'view', categoryFilter:'Alle', sortMode:'standard' };
+let tempImages = { bild1:null, bild2:null };
+let formDraft = null;
+let cameraState = { stream:null, slot:null, facing:'environment' };
+
+function byId(id){ return document.getElementById(id); }
+function toast(msg){
+  const t = byId('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(window.__toastT);
+  window.__toastT = setTimeout(()=>t.classList.remove('show'), 1800);
+}
+
+/* ===================== Bildkompression ===================== */
+/* Jedes Foto wird unabhängig von Hoch-/Querformat mittig auf ein 1:1-Quadrat
+   zugeschnitten und dann komprimiert. So sind alle Bilder in Vorschau, Karten
+   und PDF-Export immer gleich groß und unverzerrt – egal wie fotografiert wurde. */
+async function compressImage(file, targetSize=1300, quality=0.8){
+  let bitmap = null;
+  try{ bitmap = await createImageBitmap(file, {imageOrientation:'from-image'}); }catch(e){ bitmap = null; }
+  if(!bitmap){
+    // Fallback ohne EXIF-Korrektur
+    const dataUrl = await new Promise((res,rej)=>{
+      const r = new FileReader();
+      r.onload = ev => res(ev.target.result);
+      r.onerror = rej;
+      r.readAsDataURL(file);
+    });
+    const img = await new Promise((res,rej)=>{
+      const im = new Image(); im.onload=()=>res(im); im.onerror=rej; im.src = dataUrl;
+    });
+    const out = cropToSquare(img, img.width, img.height, targetSize, quality);
+    return out;
+  }
+  const out = cropToSquare(bitmap, bitmap.width, bitmap.height, targetSize, quality);
+  bitmap.close && bitmap.close();
+  return out;
+}
+function cropToSquare(source, w, h, targetSize, quality){
+  const side = Math.min(w, h);
+  const sx = (w - side) / 2;
+  const sy = (h - side) / 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = targetSize; canvas.height = targetSize;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(source, sx, sy, side, side, 0, 0, targetSize, targetSize);
+  return canvas.toDataURL('image/jpeg', quality);
+}
+
+/* ===================== Live-Kamera (1:1-Vorschau, optional) ===================== */
+/* Zeigt einen quadratischen Live-Sucher (object-fit:cover) – was zu sehen ist,
+   entspricht exakt dem späteren 1:1-Zuschnitt. Das ist eine ZUSÄTZLICHE Option:
+   der normale "📷 Foto"-Button (nativer Kamera-Dialog des Geräts) ist immer
+   verfügbar und zuverlässig. Wichtig: Wir lösen bei Fehlschlag NIE automatisch
+   einen Klick auf den Datei-Dialog aus – das führt in Safari/iOS dazu, dass der
+   Dialog lautlos blockiert wird, weil die "User-Geste" nach einem await bereits
+   verfallen ist. Stattdessen gibt es eine klare Meldung. */
+async function openCamera(slot){
+  if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)){
+    toast('Live-Kamera hier nicht verfügbar – bitte „📷 Foto“ nutzen');
+    return;
+  }
+  cameraState.slot = slot;
+  try{
+    await startStream();
+    byId('cameraOverlay').classList.remove('hidden');
+  }catch(err){
+    toast('Live-Kamera nicht verfügbar – bitte „📷 Foto“ nutzen');
+  }
+}
+async function startStream(){
+  if(cameraState.stream){ cameraState.stream.getTracks().forEach(t=>t.stop()); }
+  cameraState.stream = await navigator.mediaDevices.getUserMedia({
+    video:{ facingMode:{ ideal: cameraState.facing } }, audio:false
+  });
+  const video = byId('cameraVideo');
+  video.srcObject = cameraState.stream;
+  try{ await video.play(); }catch(e){}
+}
+async function switchCamera(){
+  cameraState.facing = cameraState.facing === 'environment' ? 'user' : 'environment';
+  try{ await startStream(); }catch(e){ toast('Kamerawechsel nicht möglich'); }
+}
+function closeCamera(){
+  if(cameraState.stream){ cameraState.stream.getTracks().forEach(t=>t.stop()); cameraState.stream=null; }
+  byId('cameraOverlay').classList.add('hidden');
+  cameraState.slot = null;
+}
+function captureFromCamera(){
+  const video = byId('cameraVideo');
+  if(!video.videoWidth){ toast('Kamera lädt noch…'); return; }
+  const dataUrl = cropToSquare(video, video.videoWidth, video.videoHeight, 1300, 0.8);
+  if(cameraState.slot === 1) tempImages.bild1 = dataUrl;
+  else if(cameraState.slot === 2) tempImages.bild2 = dataUrl;
+  closeCamera();
+  renderApp();
+}
+
+/* ===================== Zoom-Lightbox mit Galerie ===================== */
+let lb = { scale:1, x:0, y:0, lastTap:0 };
+let lbPointers = new Map();
+let lbPinchStartDist = 0, lbPinchStartScale = 1, lbPanStart = null, lbSwipeStart = null;
+let currentGallery = [];
+let currentGalleryIndex = 0;
+
+/* Baut die Bilder-Galerie aus genau den Einträgen, die aktuell in der
+   Übersicht sichtbar sind (gleicher Filter/Suche/Sortierung) – so führt
+   "weiter/zurück" durch exakt das, was man gerade sieht. */
+function getVisibleEntries(show){
+  let entries = loadEntries(show.id);
+  if(state.categoryFilter && state.categoryFilter !== 'Alle'){
+    entries = entries.filter(e => (e.kategorie || 'Einleuchten') === state.categoryFilter);
+  }
+  const q = state.search.trim().toLowerCase();
+  if(q){
+    entries = entries.filter(e =>
+      (e.kreis||'').toLowerCase().includes(q) ||
+      (e.filter||'').toLowerCase().includes(q) ||
+      (e.adresse||'').toLowerCase().includes(q) ||
+      (e.bemerkung||'').toLowerCase().includes(q) ||
+      (e.gruppe||'').toLowerCase().includes(q)
+    );
+  }
+  return sortEntries(entries);
+}
+function getGalleryForShow(show){
+  const entries = getVisibleEntries(show);
+  let gallery = [];
+  entries.forEach(e=>{
+    const total = (e.bild1?1:0) + (e.bild2?1:0);
+    let n = 0;
+    if(e.bild1){ n++; gallery.push({src:e.bild1, entryId:e.id, slot:1, n:n, total:total,
+      kreis:e.kreis, filter:e.filter, adresse:e.adresse, bemerkung:e.bemerkung}); }
+    if(e.bild2){ n++; gallery.push({src:e.bild2, entryId:e.id, slot:2, n:n, total:total,
+      kreis:e.kreis, filter:e.filter, adresse:e.adresse, bemerkung:e.bemerkung}); }
+  });
+  return gallery;
+}
+function openGalleryLightbox(entryId, slot){
+  const show = loadShows().find(s=>s.id===state.showId);
+  if(!show) return;
+  const gallery = getGalleryForShow(show);
+  const idx = gallery.findIndex(g=>g.entryId===entryId && g.slot===slot);
+  if(idx < 0) return;
+  currentGallery = gallery;
+  showGalleryAt(idx);
+}
+function showGalleryAt(idx){
+  if(idx < 0 || idx >= currentGallery.length) return;
+  currentGalleryIndex = idx;
+  const item = currentGallery[idx];
+  lb.scale = 1; lb.x = 0; lb.y = 0;
+  applyLbTransform();
+  byId('lightboxImg').src = item.src;
+  renderLbInfo(item);
+  byId('lightbox').classList.remove('hidden');
+  updateLbNavVisibility();
+}
+function renderLbInfo(item){
+  let html = '<div>Kreis: <b>'+escapeHtml(item.kreis||'–')+'</b> · Filter: <b>'+escapeHtml(item.filter||'–')+'</b></div>';
+  if(item.adresse){ html += '<div class="lb-sub">Adresse: '+escapeHtml(item.adresse)+'</div>'; }
+  if(item.bemerkung){ html += '<div class="lb-sub">'+escapeHtml(item.bemerkung)+'</div>'; }
+  html += '<div class="lb-sub">Bild '+item.n+' von '+item.total+'</div>';
+  byId('lbInfo').innerHTML = html;
+}
+function updateLbNavVisibility(){
+  const box = byId('lightbox');
+  box.querySelector('.lb-prev').style.visibility = currentGalleryIndex > 0 ? 'visible' : 'hidden';
+  box.querySelector('.lb-next').style.visibility = currentGalleryIndex < currentGallery.length-1 ? 'visible' : 'hidden';
+}
+function lbNav(dir){
+  const newIdx = currentGalleryIndex + dir;
+  if(newIdx < 0 || newIdx >= currentGallery.length) return;
+  showGalleryAt(newIdx);
+}
+function openLightboxSingle(src){
+  if(!src) return;
+  currentGallery = []; currentGalleryIndex = 0;
+  lb.scale = 1; lb.x = 0; lb.y = 0;
+  applyLbTransform();
+  byId('lightboxImg').src = src;
+  byId('lbInfo').innerHTML = '';
+  byId('lightbox').classList.remove('hidden');
+  const box = byId('lightbox');
+  box.querySelector('.lb-prev').style.visibility = 'hidden';
+  box.querySelector('.lb-next').style.visibility = 'hidden';
+}
+function closeLightbox(){
+  byId('lightbox').classList.add('hidden');
+  byId('lightboxImg').src = '';
+  currentGallery = []; currentGalleryIndex = 0;
+}
+function applyLbTransform(){
+  byId('lightboxImg').style.transform = 'translate('+lb.x+'px,'+lb.y+'px) scale('+lb.scale+')';
+}
+function lbDist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+
+function initLightbox(){
+  const box = byId('lightbox');
+  const img = byId('lightboxImg');
+  box.addEventListener('click', e=>{ if(e.target.id === 'lightbox') closeLightbox(); });
+  img.addEventListener('pointerdown', e=>{
+    img.setPointerCapture(e.pointerId);
+    lbPointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if(lbPointers.size === 1){
+      lbPanStart = {x:e.clientX - lb.x, y:e.clientY - lb.y};
+      lbSwipeStart = {x:e.clientX, y:e.clientY};
+      const now = Date.now();
+      if(now - lb.lastTap < 300){
+        lb.scale = lb.scale > 1 ? 1 : 2.5;
+        lb.x = 0; lb.y = 0;
+        applyLbTransform();
+      }
+      lb.lastTap = now;
+    } else if(lbPointers.size === 2){
+      const pts = [...lbPointers.values()];
+      lbPinchStartDist = lbDist(pts[0], pts[1]);
+      lbPinchStartScale = lb.scale;
+    }
+  });
+  img.addEventListener('pointermove', e=>{
+    if(!lbPointers.has(e.pointerId)) return;
+    lbPointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if(lbPointers.size === 2 && lbPinchStartDist){
+      const pts = [...lbPointers.values()];
+      const d = lbDist(pts[0], pts[1]);
+      lb.scale = Math.min(5, Math.max(1, lbPinchStartScale * d / lbPinchStartDist));
+      applyLbTransform();
+    } else if(lbPointers.size === 1 && lb.scale > 1 && lbPanStart){
+      lb.x = e.clientX - lbPanStart.x;
+      lb.y = e.clientY - lbPanStart.y;
+      applyLbTransform();
+    }
+  });
+  const onPointerUp = e=>{
+    const wasSingle = lbPointers.size === 1;
+    if(wasSingle && lb.scale <= 1 && lbSwipeStart){
+      const dx = e.clientX - lbSwipeStart.x;
+      const dy = e.clientY - lbSwipeStart.y;
+      if(Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5){
+        lbNav(dx < 0 ? 1 : -1);
+      }
+    }
+    lbSwipeStart = null;
+    lbPointers.delete(e.pointerId);
+    if(lbPointers.size < 2) lbPinchStartDist = 0;
+  };
+  const onPointerCancel = e=>{
+    lbSwipeStart = null;
+    lbPointers.delete(e.pointerId);
+    if(lbPointers.size < 2) lbPinchStartDist = 0;
+  };
+  img.addEventListener('pointerup', onPointerUp);
+  img.addEventListener('pointercancel', onPointerCancel);
+}
+
+function deleteTempImage(slot){
+  if(!confirm('Foto wirklich löschen?')) return;
+  if(slot === 1) tempImages.bild1 = null; else tempImages.bild2 = null;
+  renderApp();
+}
+function deleteEntryImage(entryId, slot){
+  if(!confirm('Dieses Bild wirklich löschen?')) return;
+  let entries = loadEntries(state.showId);
+  const idx = entries.findIndex(e=>e.id===entryId);
+  if(idx < 0) return;
+  if(slot === 1) entries[idx].bild1 = null; else entries[idx].bild2 = null;
+  entries[idx].updatedAt = Date.now();
+  saveEntries(state.showId, entries);
+  renderApp();
+}
+
+/* ===================== Datei-Inputs ===================== */
+byId('fileInput1').addEventListener('change', async (e)=>{
+  const f = e.target.files[0]; if(!f) return;
+  toast('Bild 1 wird komprimiert…');
+  tempImages.bild1 = await compressImage(f);
+  e.target.value = '';
+  renderApp();
+});
+byId('fileInput2').addEventListener('change', async (e)=>{
+  const f = e.target.files[0]; if(!f) return;
+  toast('Bild 2 wird komprimiert…');
+  tempImages.bild2 = await compressImage(f);
+  e.target.value = '';
+  renderApp();
+});
+byId('jsonImportInput').addEventListener('change', (e)=>{
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    try{
+      const data = JSON.parse(ev.target.result);
+      if(data.show && data.entries){
+        const shows = loadShows();
+        data.show.id = 's_'+Date.now();
+        shows.push(data.show);
+        saveShows(shows);
+        saveEntries(data.show.id, data.entries);
+        toast('Veranstaltung importiert');
+        state.view='home'; renderApp();
+      } else { toast('Ungültige Datei'); }
+    }catch(err){ toast('Fehler beim Import'); }
+  };
+  r.readAsText(f);
+  e.target.value = '';
+});
+
+/* ===================== Helpers ===================== */
+function escapeHtml(str){
+  return (str||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function esc(s){ return escapeHtml(s).replace(/\n/g,'<br>'); }
+
+/* ===================== Kartenvorlage ===================== */
+function cardTemplate(entry, opts){
+  opts = opts || {};
+  const editable = !!opts.editable;
+  const kategorie = entry.kategorie || 'Einleuchten';
+  const katClass = kategorie === 'Aufbau' ? 'kat-aufbau' : 'kat-einleuchten';
+  let html = '<div class="card '+katClass+'" data-id="'+entry.id+'">';
+  html += '<div class="cat-badge '+katClass+'">'+escapeHtml(kategorie)+'</div>';
+  if(opts.docHeader){
+    html += '<div class="print-doc-header">'+escapeHtml(opts.docHeader)+'</div>';
+  }
+  const imgCount = (entry.bild1?1:0) + (entry.bild2?1:0);
+  html += '<div class="card-images count-'+(imgCount||1)+'">';
+  if(entry.bild1){
+    html += '<div class="img-wrap"><img src="'+entry.bild1+'" loading="lazy" onclick="openGalleryLightbox(\''+entry.id+'\',1)">';
+    if(editable){ html += '<button class="img-del" onclick="event.stopPropagation();deleteEntryImage(\''+entry.id+'\',1)">🗑</button>'; }
+    html += '</div>';
+  }
+  if(entry.bild2){
+    html += '<div class="img-wrap"><img src="'+entry.bild2+'" loading="lazy" onclick="openGalleryLightbox(\''+entry.id+'\',2)">';
+    if(editable){ html += '<button class="img-del" onclick="event.stopPropagation();deleteEntryImage(\''+entry.id+'\',2)">🗑</button>'; }
+    html += '</div>';
+  }
+  if(!entry.bild1 && !entry.bild2){ html += '<div class="img-wrap"><span style="color:#999;font-size:12px;">Kein Bild</span></div>'; }
+  html += '</div>';
+  html += '<table class="card-footer"><tr>';
+  html += '<td><b>Kreis</b>'+escapeHtml(entry.kreis||'–')+'</td>';
+  html += '<td><b>Filter</b>'+escapeHtml(entry.filter||'–')+'</td>';
+  html += '<td><b>Adresse</b>'+escapeHtml(entry.adresse||'–')+'</td>';
+  html += '</tr>';
+  if(entry.gruppe || entry.bemerkung){
+    html += '<tr><td><b>Gruppe</b>'+escapeHtml(entry.gruppe||'–')+'</td>';
+    html += '<td colspan="2"><b>Bemerkung</b>'+esc(entry.bemerkung||'–')+'</td></tr>';
+  }
+  html += '</table>';
+  if(editable){
+    html += '<div class="card-editrow">';
+    html += '<button class="btn-primary" onclick="editEntry(\''+entry.id+'\')">✏️ Bearbeiten</button>';
+    html += '<button onclick="shareEntry(\''+entry.id+'\')">📤 Teilen</button>';
+    html += '<button class="btn-danger" onclick="deleteEntry(\''+entry.id+'\')">🗑️</button>';
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+/* ===================== Render: Router ===================== */
+function renderApp(){
+  if(state.view === 'home') renderHome();
+  else if(state.view === 'show') renderShow();
+}
+
+/* ---- Home ---- */
+function renderHome(){
+  const shows = loadShows().sort((a,b)=> (b.createdAt||0) - (a.createdAt||0));
+  let html = '';
+  html += '<div class="topbar"><h1>🎭 Lichtdoku</h1>';
+  html += '<button class="iconbtn" onclick="checkForUpdate(true)" title="Nach Updates suchen">🔄</button>';
+  html += '<button class="iconbtn" onclick="triggerImport()" title="Import">⬆️</button>';
+  html += '</div>';
+  html += '<div class="content">';
+  html += '<div class="fab-row"><button class="btn-primary" onclick="newShow()">＋ Neue Veranstaltung / Stück</button></div>';
+  if(shows.length === 0){
+    html += '<div class="empty-hint">Noch keine Veranstaltung angelegt.<br>Erstelle eine neue Dokumentation für dein Stück oder Event.</div>';
+  } else {
+    shows.forEach(s=>{
+      const cnt = loadEntries(s.id).length;
+      html += '<div class="show-item">';
+      html += '<div class="meta" onclick="openShow(\''+s.id+'\')"><div class="name">'+escapeHtml(s.name)+'</div>';
+      html += '<div class="count">'+cnt+' Kreis(e)'+(s.date? ' · '+escapeHtml(s.date):'')+'</div></div>';
+      html += '<div class="show-actions">';
+      html += '<button class="btn-primary" onclick="openShow(\''+s.id+'\')">Öffnen</button>';
+      html += '<button class="btn-danger" onclick="deleteShow(\''+s.id+'\')">🗑️</button>';
+      html += '</div></div>';
+    });
+  }
+  html += '<div class="version-tag">Lichtdoku v'+APP_VERSION+'</div>';
+  html += '</div>';
+  byId('app').innerHTML = html;
+}
+
+function newShow(){
+  const name = prompt('Name der Veranstaltung / des Stücks:');
+  if(!name) return;
+  const date = prompt('Datum / Info (optional):','') || '';
+  const shows = loadShows();
+  const show = { id:'s_'+Date.now(), name:name.trim(), date:date.trim(), createdAt:Date.now() };
+  shows.push(show);
+  saveShows(shows);
+  saveEntries(show.id, []);
+  openShow(show.id);
+}
+function deleteShow(id){
+  const s = loadShows().find(x=>x.id===id);
+  if(!s) return;
+  if(!confirm('„'+s.name+'“ inklusive aller Kreise wirklich löschen?')) return;
+  saveShows(loadShows().filter(x=>x.id!==id));
+  localStorage.removeItem('ld_entries_'+id);
+  renderApp();
+}
+function openShow(id){
+  state.view='show'; state.showId=id; state.showTab='overview'; state.search='';
+  renderApp();
+}
+function triggerImport(){ byId('jsonImportInput').click(); }
+
+/* ---- Show: Übersicht / Formular ---- */
+function renderShow(){
+  const show = loadShows().find(s=>s.id===state.showId);
+  if(!show){ state.view='home'; renderApp(); return; }
+  let html = '';
+  html += '<div class="topbar">';
+  html += '<div class="tb-row">';
+  html += '<button class="iconbtn" onclick="backHome()">←</button>';
+  html += '<div style="flex:1;min-width:0;"><h1>'+escapeHtml(show.name)+'</h1>';
+  html += '<div class="sub">'+(show.date?escapeHtml(show.date):'')+'</div></div>';
+  html += '<button class="iconbtn" onclick="renameShow()" title="Titel bearbeiten">✏️</button>';
+  html += '</div>';
+  html += '<div class="mode-toggle">';
+  html += '<button class="'+(state.mode==='view'?'active':'')+'" onclick="setMode(\'view\')">👁 Ansicht</button>';
+  html += '<button class="'+(state.mode==='edit'?'active':'')+'" onclick="setMode(\'edit\')">✏️ Bearbeiten</button>';
+  html += '</div>';
+  html += '</div>';
+  html += '<div class="content">';
+
+  const showingOverview = (state.mode === 'view' || state.showTab === 'overview');
+  if(showingOverview){
+    html += renderOverviewBody(show);
+  } else {
+    html += renderFormBody(show);
+  }
+  html += '</div>';
+  if(state.mode === 'edit' && showingOverview){
+    html += '<button class="fab" onclick="newEntry()" title="Neuer Kreis">＋</button>';
+  }
+  byId('app').innerHTML = html;
+}
+
+function renameShow(){
+  const show = loadShows().find(s=>s.id===state.showId);
+  if(!show) return;
+  const name = prompt('Titel der Veranstaltung / des Stücks:', show.name);
+  if(name === null) return;
+  const date = prompt('Datum / Info (optional):', show.date || '');
+  if(date === null) return;
+  const shows = loadShows();
+  const idx = shows.findIndex(s=>s.id===show.id);
+  if(idx >= 0){
+    shows[idx].name = name.trim() || shows[idx].name;
+    shows[idx].date = date.trim();
+    saveShows(shows);
+  }
+  renderApp();
+}
+
+function backHome(){ state.view='home'; renderApp(); }
+function switchTab(tab){ state.showTab = tab; renderApp(); }
+function setMode(m){
+  state.mode = m;
+  if(m === 'view'){ state.showTab = 'overview'; }
+  renderApp();
+}
+function setCategory(c){ state.categoryFilter = c; renderApp(); }
+function setSort(v){ state.sortMode = v; renderApp(); }
+function kreisSortValue(k){
+  const m = (k||'').match(/\d+/);
+  return m ? parseInt(m[0], 10) : -1;
+}
+function kategorieRank(e){ return (e.kategorie||'Einleuchten') === 'Aufbau' ? 0 : 1; }
+function sortEntries(entries){
+  const mode = state.sortMode || 'standard';
+  if(mode === 'standard'){
+    // Grundsätzlich: erst alle Aufbau-Kreise, dann alle Einleuchten-Kreise,
+    // innerhalb jeder Gruppe Kreisnummer groß → klein.
+    return entries.slice().sort((a,b)=>
+      kategorieRank(a) - kategorieRank(b) ||
+      kreisSortValue(b.kreis) - kreisSortValue(a.kreis) ||
+      (a.createdAt - b.createdAt)
+    );
+  }
+  if(mode === 'kreis-asc'){
+    return entries.slice().sort((a,b)=> kreisSortValue(a.kreis)-kreisSortValue(b.kreis) || (a.createdAt-b.createdAt));
+  }
+  if(mode === 'kreis-desc'){
+    return entries.slice().sort((a,b)=> kreisSortValue(b.kreis)-kreisSortValue(a.kreis) || (a.createdAt-b.createdAt));
+  }
+  return entries.slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+}
+
+const CATEGORIES = ['Alle','Aufbau','Einleuchten'];
+
+function renderOverviewBody(show){
+  const entries = getVisibleEntries(show);
+  const editable = state.mode === 'edit';
+  const q = state.search.trim();
+
+  let html = '';
+  html += '<div class="sticky-bar"><div class="cat-tabs">';
+  CATEGORIES.forEach(c=>{
+    const katCls = c==='Aufbau' ? 'kat-aufbau' : (c==='Einleuchten' ? 'kat-einleuchten' : '');
+    html += '<button class="'+(state.categoryFilter===c?'active ':'')+katCls+'" onclick="setCategory(\''+c+'\')">'+c+'</button>';
+  });
+  html += '</div></div>';
+  html += '<div class="toolbar">';
+  html += '<button class="btn-ok" onclick="exportPDF()">📄 PDF-Export</button>';
+  html += '<button onclick="shareShowSummary()">📤 Teilen (Text)</button>';
+  html += '<button onclick="exportJSON()">💾 Backup (JSON)</button>';
+  html += '</div>';
+  html += '<div class="sort-row"><select onchange="setSort(this.value)">';
+  html += '<option value="standard" '+(state.sortMode==='standard'?'selected':'')+'>Standard (Aufbau → Einleuchten, Kreis groß→klein)</option>';
+  html += '<option value="kreis-asc" '+(state.sortMode==='kreis-asc'?'selected':'')+'>Kreis: niedrig → hoch</option>';
+  html += '<option value="kreis-desc" '+(state.sortMode==='kreis-desc'?'selected':'')+'>Kreis: hoch → niedrig</option>';
+  html += '<option value="eingabe" '+(state.sortMode==='eingabe'?'selected':'')+'>Eingabe-Reihenfolge</option>';
+  html += '</select></div>';
+  html += '<div class="search-box"><input type="text" placeholder="Suche nach Kreis, Filter, Adresse, Bemerkung…" value="'+escapeHtml(state.search)+'" oninput="onSearch(this.value)"></div>';
+  if(entries.length === 0){
+    html += '<div class="empty-hint">Keine Einträge'+(q?' gefunden':'')+'.<br>'+(q?'':'Lege unter „Neuer Kreis“ den ersten Eintrag an.')+'</div>';
+  } else {
+    const showSections = (state.categoryFilter === 'Alle' && state.sortMode === 'standard');
+    let lastKat = null;
+    html += '<div class="grid">';
+    entries.forEach(e=>{
+      const kat = e.kategorie || 'Einleuchten';
+      if(showSections && kat !== lastKat){
+        html += '<div class="section-head kat-'+(kat==='Aufbau'?'aufbau':'einleuchten')+'">'+escapeHtml(kat)+'</div>';
+        lastKat = kat;
+      }
+      html += cardTemplate(e, {editable:editable});
+    });
+    html += '</div>';
+  }
+  return html;
+}
+function onSearch(v){ state.search = v; renderApp(); focusSearch(); }
+function focusSearch(){
+  const el = document.querySelector('.search-box input');
+  if(el){ el.focus(); const v = el.value; el.value=''; el.value=v; }
+}
+
+/* ---- Entry-Formular ---- */
+function newEntry(){
+  state.editId = null;
+  tempImages = { bild1:null, bild2:null };
+  formDraft = {
+    kategorie: state.categoryFilter === 'Aufbau' ? 'Aufbau' : 'Einleuchten',
+    kreis:'', filter:'', adresse:'', gruppe:'', bemerkung:''
+  };
+  state.showTab = 'form';
+  renderApp();
+}
+function editEntry(id){
+  const entries = loadEntries(state.showId);
+  const e = entries.find(x=>x.id===id);
+  if(!e) return;
+  state.editId = id;
+  tempImages = { bild1: e.bild1 || null, bild2: e.bild2 || null };
+  formDraft = {
+    kategorie: e.kategorie || 'Einleuchten',
+    kreis: e.kreis || '', filter: e.filter || '', adresse: e.adresse || '',
+    gruppe: e.gruppe || '', bemerkung: e.bemerkung || ''
+  };
+  state.showTab = 'form';
+  renderApp();
+}
+function deleteEntry(id){
+  if(!confirm('Diesen Eintrag wirklich löschen?')) return;
+  let entries = loadEntries(state.showId);
+  entries = entries.filter(e=>e.id!==id);
+  saveEntries(state.showId, entries);
+  renderApp();
+}
+
+const QUICK_FILTERS = ['501','R119','201','202','119','132','nc'];
+
+function renderFormBody(show){
+  if(!formDraft){
+    formDraft = { kategorie:'Einleuchten', kreis:'', filter:'', adresse:'', gruppe:'', bemerkung:'' };
+  }
+  const d = formDraft;
+
+  let html = '<div>';
+  html += '<label>Kategorie</label>';
+  html += '<div class="tag-row" id="kategorieRow">';
+  ['Aufbau','Einleuchten'].forEach(k=>{
+    const katCls = k === 'Aufbau' ? 'kat-aufbau' : 'kat-einleuchten';
+    html += '<button type="button" class="tag cat-choice '+katCls+' '+(k===d.kategorie?'active':'')+'" onclick="selectKategorie(\''+k+'\')">'+k+'</button>';
+  });
+  html += '</div>';
+
+  html += '<label>Fotos</label>';
+  html += '<div class="photo-btns">';
+
+  html += '<div class="photo-slot">';
+  html += '<div class="preview" id="prev1"'+(tempImages.bild1?'':' onclick="document.getElementById(\'fileInput1\').click()"')+'>';
+  if(tempImages.bild1){
+    html += '<img src="'+tempImages.bild1+'" onclick="openLightboxSingle(this.src)">';
+    html += '<button class="img-del" onclick="event.stopPropagation();deleteTempImage(1)">🗑</button>';
+  } else { html += '<span class="plus">＋</span>'; }
+  html += '</div>';
+  html += '<div class="photo-slot-btns">';
+  html += '<button onclick="document.getElementById(\'fileInput1\').click()">📷 Nahaufnahme</button>';
+  html += '<button class="cam-live-btn" onclick="openCamera(1)">🎥 Live 1:1</button>';
+  html += '</div></div>';
+
+  html += '<div class="photo-slot">';
+  html += '<div class="preview" id="prev2"'+(tempImages.bild2?'':' onclick="document.getElementById(\'fileInput2\').click()"')+'>';
+  if(tempImages.bild2){
+    html += '<img src="'+tempImages.bild2+'" onclick="openLightboxSingle(this.src)">';
+    html += '<button class="img-del" onclick="event.stopPropagation();deleteTempImage(2)">🗑</button>';
+  } else { html += '<span class="plus">＋</span>'; }
+  html += '</div>';
+  html += '<div class="photo-slot-btns">';
+  html += '<button onclick="document.getElementById(\'fileInput2\').click()">📷 Totalansicht</button>';
+  html += '<button class="cam-live-btn" onclick="openCamera(2)">🎥 Live 1:1</button>';
+  html += '</div></div>';
+
+  html += '</div>';
+
+  html += '<label>Kreis (optional)</label>';
+  html += '<input id="f_kreis" type="text" value="'+escapeHtml(d.kreis)+'" placeholder="z.B. 12+17+103" oninput="updateDraft(\'kreis\', this.value)">';
+
+  html += '<label>Filter</label>';
+  html += '<input id="f_filter" type="text" value="'+escapeHtml(d.filter)+'" placeholder="z.B. Lee 201" oninput="updateDraft(\'filter\', this.value)">';
+  html += '<div class="tag-row">';
+  QUICK_FILTERS.forEach(t=>{
+    html += '<button class="tag" onclick="addFilterTag(\''+t+'\')">'+t+'</button>';
+  });
+  html += '</div>';
+
+  html += '<label>Adresse</label>';
+  html += '<input id="f_adresse" type="text" value="'+escapeHtml(d.adresse)+'" placeholder="z.B. Podiumsklappe li., Steckplatz 1" oninput="updateDraft(\'adresse\', this.value)">';
+
+  html += '<label>Gruppe (optional)</label>';
+  html += '<input id="f_gruppe" type="text" value="'+escapeHtml(d.gruppe)+'" placeholder="z.B. 24" oninput="updateDraft(\'gruppe\', this.value)">';
+
+  html += '<label>Bemerkung / Notizen</label>';
+  html += '<textarea id="f_bemerkung" placeholder="Verkabelung, Position, Hinweise…" oninput="updateDraft(\'bemerkung\', this.value)">'+escapeHtml(d.bemerkung)+'</textarea>';
+
+  html += '<div class="form-actions">';
+  html += '<button class="btn-primary" onclick="saveEntry()">💾 Speichern</button>';
+  html += '<button onclick="cancelForm()">Abbrechen</button>';
+  html += '</div>';
+  html += '</div>';
+  return html;
+}
+
+function updateDraft(field, value){
+  if(formDraft) formDraft[field] = value;
+}
+
+function selectKategorie(k){
+  if(formDraft) formDraft.kategorie = k;
+  document.querySelectorAll('#kategorieRow .cat-choice').forEach(b=>{
+    b.classList.toggle('active', b.textContent.trim() === k);
+  });
+}
+
+function addFilterTag(tag){
+  const input = byId('f_filter');
+  if(!input) return;
+  const cur = input.value.trim();
+  const newVal = cur ? (cur + ' + ' + tag) : tag;
+  input.value = newVal;
+  updateDraft('filter', newVal);
+}
+
+function cancelForm(){
+  tempImages = { bild1:null, bild2:null };
+  formDraft = null;
+  state.editId = null;
+  state.showTab = 'overview';
+  renderApp();
+}
+
+function saveEntry(){
+  if(!formDraft) formDraft = {};
+  let entries = loadEntries(state.showId);
+  const now = Date.now();
+  const data = {
+    id: state.editId || ('e_'+now),
+    kategorie: formDraft.kategorie || 'Einleuchten',
+    kreis: (formDraft.kreis||'').trim(),
+    filter: (formDraft.filter||'').trim(),
+    adresse: (formDraft.adresse||'').trim(),
+    gruppe: (formDraft.gruppe||'').trim(),
+    bemerkung: (formDraft.bemerkung||'').trim(),
+    bild1: tempImages.bild1,
+    bild2: tempImages.bild2,
+    createdAt: now,
+    updatedAt: now
+  };
+  if(state.editId){
+    const idx = entries.findIndex(e=>e.id===state.editId);
+    if(idx >= 0){ data.createdAt = entries[idx].createdAt || now; entries[idx] = data; }
+    else entries.push(data);
+  } else {
+    entries.push(data);
+  }
+  saveEntries(state.showId, entries);
+  tempImages = { bild1:null, bild2:null };
+  formDraft = null;
+  state.editId = null;
+  state.showTab = 'overview';
+  toast('Gespeichert');
+  renderApp();
+}
+
+/* ===================== PDF-Export (Print) ===================== */
+function exportPDF(){
+  const show = loadShows().find(s=>s.id===state.showId);
+  const entries = getVisibleEntries(show);
+  if(entries.length === 0){ toast('Keine Einträge zum Exportieren'); return; }
+  const headerText = show.name + (state.categoryFilter && state.categoryFilter !== 'Alle' ? ' – '+state.categoryFilter : '');
+  let html = '';
+  entries.forEach(e=>{ html += cardTemplate(e, {editable:false, docHeader:headerText}); });
+  byId('printArea').innerHTML = html;
+  setTimeout(()=>{ window.print(); }, 100);
+}
+
+/* ===================== Teilen ===================== */
+function dataURLtoFile(dataurl, filename){
+  const arr = dataurl.split(',');
+  const mimeMatch = arr[0].match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while(n--){ u8arr[n] = bstr.charCodeAt(n); }
+  return new File([u8arr], filename, {type:mime});
+}
+
+async function shareEntry(id){
+  const entries = loadEntries(state.showId);
+  const e = entries.find(x=>x.id===id);
+  if(!e) return;
+  const text = 'Kreis: '+(e.kreis||'-')+'\nFilter: '+(e.filter||'-')+'\nBemerkung: '+(e.bemerkung||'-');
+  const files = [];
+  if(e.bild1) files.push(dataURLtoFile(e.bild1, 'kreis_'+e.kreis+'_1.jpg'));
+  if(e.bild2) files.push(dataURLtoFile(e.bild2, 'kreis_'+e.kreis+'_2.jpg'));
+  try{
+    if(navigator.canShare && files.length && navigator.canShare({files})){
+      await navigator.share({files:files, title:'Lichtdoku – Kreis '+e.kreis, text:text});
+    } else if(navigator.share){
+      await navigator.share({title:'Lichtdoku – Kreis '+e.kreis, text:text});
+    } else {
+      await navigator.clipboard.writeText(text);
+      toast('Kein Teilen verfügbar – Text kopiert');
+    }
+  }catch(err){ /* Nutzer hat Teilen abgebrochen */ }
+}
+
+async function shareShowSummary(){
+  const show = loadShows().find(s=>s.id===state.showId);
+  const entries = getVisibleEntries(show);
+  let text = show.name + (show.date? ' ('+show.date+')' : '') + '\n\n';
+  entries.forEach(e=>{
+    text += '['+(e.kategorie||'Einleuchten')+'] Kreis: '+(e.kreis||'-')+' | Filter: '+(e.filter||'-')+
+      (e.adresse? ' | Adresse: '+e.adresse : '') + (e.bemerkung? ' | '+e.bemerkung : '') + '\n';
+  });
+  try{
+    if(navigator.share){ await navigator.share({title:show.name, text:text}); }
+    else { await navigator.clipboard.writeText(text); toast('Zusammenfassung kopiert'); }
+  }catch(err){}
+}
+
+function exportJSON(){
+  const show = loadShows().find(s=>s.id===state.showId);
+  const entries = loadEntries(state.showId);
+  const blob = new Blob([JSON.stringify({show:show, entries:entries}, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = (show.name||'lichtdoku').replace(/[^a-z0-9]+/gi,'_') + '.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* ===================== Start ===================== */
+initLightbox();
+registerServiceWorker();
+initVersionCheck();
+renderApp();
+</script>
+</body>
+</html>

@@ -104,7 +104,6 @@
     padding:4px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:.03em;z-index:3;font-weight:700;}
   .cat-badge.kat-aufbau{background:var(--kat-aufbau);}
   .cat-badge.kat-einleuchten{background:var(--kat-einleuchten);}
-  .print-doc-header{display:none;}
   .card-images{display:flex;flex-direction:column;}
   .img-wrap{width:100%;margin:0 auto;aspect-ratio:1/1;background:#e8e8e8;display:flex;align-items:center;justify-content:center;
     border-top:1px solid #ccc;overflow:hidden;position:relative;}
@@ -123,10 +122,11 @@
   .photo-btns{display:flex;gap:10px;}
   .photo-slot{flex:1;text-align:center;}
   .photo-slot .preview{width:100%;aspect-ratio:1/1;background:var(--card-dark);border:1px dashed var(--border);
-    border-radius:var(--radius);display:flex;align-items:center;justify-content:center;overflow:hidden;
+    border-radius:var(--radius);display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;
     margin-bottom:6px;position:relative;}
   .photo-slot .preview img{width:100%;height:100%;object-fit:cover;}
   .photo-slot .preview .plus{font-size:34px;color:var(--muted);}
+  .photo-slot .preview .plus-hint{font-size:11px;color:var(--muted);margin-top:-4px;}
   .photo-slot-btns{display:flex;flex-direction:column;gap:6px;}
   .photo-slot-btns button{width:100%;font-size:13px;padding:9px;}
   .cam-live-btn{background:transparent;border:1px dashed var(--border);color:var(--muted);
@@ -140,34 +140,6 @@
   .form-actions{display:flex;gap:10px;margin-top:24px;}
   .form-actions button{flex:1;padding:14px;font-size:16px;}
 
-  /* Print: jeder Kreis bekommt genau eine eigene Seite, Bilder möglichst groß & quadratisch */
-  #printArea{display:none;}
-  @media print{
-    body *{visibility:hidden;}
-    #printArea, #printArea *{visibility:visible;}
-    #printArea{display:block !important;position:absolute;left:0;top:0;width:100%;}
-    #printArea .cat-badge{display:none;}
-    #printArea .print-doc-header{display:block;font-size:10px;color:#666;text-transform:uppercase;
-      letter-spacing:.04em;text-align:center;border-bottom:1px solid #ccc;padding-bottom:2mm;
-      margin-bottom:3mm;flex:0 0 auto;}
-    #printArea .card{
-      width:100%;box-sizing:border-box;box-shadow:none;border:none;border-radius:0;margin:0;
-      display:flex;flex-direction:column;
-      page-break-after:always;break-after:page;
-      page-break-inside:avoid;break-inside:avoid;
-    }
-    #printArea .card:last-child{ page-break-after:auto; break-after:auto; }
-    #printArea .card-title{flex:0 0 auto;font-size:20px;padding:0 0 4mm;}
-    #printArea .card-images{flex:1;display:flex;flex-direction:column;justify-content:center;
-      align-items:center;gap:6mm;}
-    #printArea .card-images .img-wrap{flex:0 0 auto;aspect-ratio:auto;border-top:none;margin:0 auto;}
-    /* Ein Bild pro Kreis: möglichst groß, quadratisch */
-    #printArea .card-images.count-1 .img-wrap{width:180mm;height:180mm;}
-    /* Zwei Bilder pro Kreis: beide untereinander, groß & quadratisch */
-    #printArea .card-images.count-2 .img-wrap{width:118mm;height:118mm;}
-    #printArea .card-footer{flex:0 0 auto;margin-top:5mm;font-size:11px;}
-    @page{ size:A4; margin:8mm; }
-  }
   .hidden{display:none !important;}
   .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
     background:#333;color:#fff;padding:10px 18px;border-radius:20px;font-size:13px;
@@ -218,7 +190,6 @@
 </head>
 <body>
 <div id="app"></div>
-<div id="printArea"></div>
 <input type="file" id="fileInput1" accept="image/*" capture="environment" class="hidden">
 <input type="file" id="fileInput2" accept="image/*" capture="environment" class="hidden">
 <input type="file" id="jsonImportInput" accept="application/json" class="hidden">
@@ -250,7 +221,7 @@
 
 <script>
 /* ===================== Version & Updates ===================== */
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 function registerServiceWorker(){
   if(!('serviceWorker' in navigator)) return;
@@ -302,9 +273,23 @@ function initVersionCheck(){
 
 /* ===================== Datenhaltung ===================== */
 function loadShows(){ try{ return JSON.parse(localStorage.getItem('ld_shows')||'[]'); }catch(e){ return []; } }
-function saveShows(s){ localStorage.setItem('ld_shows', JSON.stringify(s)); }
+function saveShows(s){
+  try{ localStorage.setItem('ld_shows', JSON.stringify(s)); return true; }
+  catch(err){
+    console.error('saveShows failed', err);
+    toast('⚠️ Speichern fehlgeschlagen – Speicher evtl. voll. Bitte Backup (JSON) sichern und alte Fotos löschen.');
+    return false;
+  }
+}
 function loadEntries(showId){ try{ return JSON.parse(localStorage.getItem('ld_entries_'+showId)||'[]'); }catch(e){ return []; } }
-function saveEntries(showId, e){ localStorage.setItem('ld_entries_'+showId, JSON.stringify(e)); }
+function saveEntries(showId, e){
+  try{ localStorage.setItem('ld_entries_'+showId, JSON.stringify(e)); return true; }
+  catch(err){
+    console.error('saveEntries failed', err);
+    toast('⚠️ Speichern fehlgeschlagen – Speicher evtl. voll. Bitte Backup (JSON) sichern und alte Fotos löschen.');
+    return false;
+  }
+}
 
 /* ===================== State ===================== */
 let state = { view:'home', showId:null, showTab:'overview', editId:null, search:'',
@@ -629,9 +614,6 @@ function cardTemplate(entry, opts){
   const katClass = kategorie === 'Aufbau' ? 'kat-aufbau' : 'kat-einleuchten';
   let html = '<div class="card '+katClass+'" data-id="'+entry.id+'">';
   html += '<div class="cat-badge '+katClass+'">'+escapeHtml(kategorie)+'</div>';
-  if(opts.docHeader){
-    html += '<div class="print-doc-header">'+escapeHtml(opts.docHeader)+'</div>';
-  }
   const imgCount = (entry.bild1?1:0) + (entry.bild2?1:0);
   html += '<div class="card-images count-'+(imgCount||1)+'">';
   if(entry.bild1){
@@ -825,8 +807,8 @@ function renderOverviewBody(show){
   });
   html += '</div></div>';
   html += '<div class="toolbar">';
-  html += '<button class="btn-ok" onclick="exportPDF()">📄 PDF-Export</button>';
-  html += '<button onclick="shareShowSummary()">📤 Teilen (Fotos+Infos)</button>';
+  html += '<button class="btn-ok" onclick="exportPDF()">📄 PDF exportieren</button>';
+  html += '<button onclick="sharePDF()">📤 PDF teilen</button>';
   html += '<button onclick="exportJSON()">💾 Backup (JSON)</button>';
   html += '</div>';
   html += '<div class="sort-row"><select onchange="setSort(this.value)">';
@@ -918,10 +900,9 @@ function renderFormBody(show){
   if(tempImages.bild1){
     html += '<img src="'+tempImages.bild1+'" onclick="openLightboxSingle(this.src)">';
     html += '<button class="img-del" onclick="event.stopPropagation();deleteTempImage(1)">🗑</button>';
-  } else { html += '<span class="plus">＋</span>'; }
+  } else { html += '<span class="plus">＋</span><div class="plus-hint">Foto</div>'; }
   html += '</div>';
   html += '<div class="photo-slot-btns">';
-  html += '<button onclick="document.getElementById(\'fileInput1\').click()">📷 Nahaufnahme</button>';
   html += '<button class="cam-live-btn" onclick="openCamera(1)">🎥 Live 1:1</button>';
   html += '</div></div>';
 
@@ -930,10 +911,9 @@ function renderFormBody(show){
   if(tempImages.bild2){
     html += '<img src="'+tempImages.bild2+'" onclick="openLightboxSingle(this.src)">';
     html += '<button class="img-del" onclick="event.stopPropagation();deleteTempImage(2)">🗑</button>';
-  } else { html += '<span class="plus">＋</span>'; }
+  } else { html += '<span class="plus">＋</span><div class="plus-hint">Foto</div>'; }
   html += '</div>';
   html += '<div class="photo-slot-btns">';
-  html += '<button onclick="document.getElementById(\'fileInput2\').click()">📷 Totalansicht</button>';
   html += '<button class="cam-live-btn" onclick="openCamera(2)">🎥 Live 1:1</button>';
   html += '</div></div>';
 
@@ -1019,7 +999,8 @@ function saveEntry(){
   } else {
     entries.push(data);
   }
-  saveEntries(state.showId, entries);
+  const ok = saveEntries(state.showId, entries);
+  if(!ok){ return; } // Fehlermeldung kam bereits aus saveEntries(); Formular bleibt offen, nichts geht verloren
   tempImages = { bild1:null, bild2:null };
   formDraft = null;
   state.editId = null;
@@ -1028,21 +1009,247 @@ function saveEntry(){
   renderApp();
 }
 
-/* ===================== PDF-Export (Print) ===================== */
+/* ===================== PDF-Erzeugung (reines JS, ohne externe Bibliotheken) ===================== */
+/* Baut eine echte PDF 1.4-Datei von Hand: A4-Seiten, eingebettete JPEGs (DCTDecode),
+   Text mit Helvetica/WinAnsiEncoding. Keine Bibliothek nötig, da JPEG-Bytes 1:1 als
+   Bild-XObject eingebettet werden können. */
+
+function dataUrlToBytes(dataUrl){
+  const base64 = dataUrl.split(',')[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for(let i=0;i<binary.length;i++){ bytes[i] = binary.charCodeAt(i); }
+  return bytes;
+}
+function strToLatin1Bytes(str){
+  const arr = new Uint8Array(str.length);
+  for(let i=0;i<str.length;i++){ arr[i] = str.charCodeAt(i) & 0xFF; }
+  return arr;
+}
+function sanitizePdfText(str){
+  if(!str) return '';
+  return String(str)
+    .replace(/[–—]/g,'-')
+    .replace(/[„“”]/g,'"')
+    .replace(/[‘’]/g,"'")
+    .replace(/…/g,'...')
+    .replace(/[^\x00-\xFF]/g,'?');
+}
+function pdfEscape(str){
+  return str.replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)');
+}
+function measureTextWidth(str, size){
+  return str.length * size * 0.5; // grobe, aber für Umbruch/Zentrierung ausreichende Näherung
+}
+function wrapPdfText(str, maxWidth, size){
+  const words = String(str).split(' ');
+  const lines = [];
+  let cur = '';
+  words.forEach(w=>{
+    const test = cur ? cur+' '+w : w;
+    if(measureTextWidth(test, size) > maxWidth && cur){ lines.push(cur); cur = w; }
+    else { cur = test; }
+  });
+  if(cur) lines.push(cur);
+  return lines;
+}
+function getJpegDimensions(bytes){
+  let i = 2;
+  while(i < bytes.length - 8){
+    if(bytes[i] !== 0xFF){ i++; continue; }
+    const marker = bytes[i+1];
+    if(marker === 0xD8 || marker === 0x01 || (marker >= 0xD0 && marker <= 0xD7)){ i += 2; continue; }
+    if(marker === 0xD9) break;
+    const len = (bytes[i+2] << 8) | bytes[i+3];
+    if(marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC){
+      return { height: (bytes[i+5]<<8)|bytes[i+6], width: (bytes[i+7]<<8)|bytes[i+8] };
+    }
+    i += 2 + len;
+  }
+  return { width: 1000, height: 1000 };
+}
+function pdfTextOp(str, x, y, size, color, maxWidth, align){
+  str = sanitizePdfText(str);
+  if(align === 'center' && maxWidth){
+    const w = measureTextWidth(str, size);
+    x = x + Math.max(0, (maxWidth - w) / 2);
+  }
+  const c = color || [0,0,0];
+  return 'BT '+c[0]+' '+c[1]+' '+c[2]+' rg /F1 '+size+' Tf '+x.toFixed(2)+' '+y.toFixed(2)+' Td ('+pdfEscape(str)+') Tj ET\n';
+}
+const KAT_COLOR = { 'Aufbau':[0.055,0.647,0.914], 'Einleuchten':[0.961,0.647,0.141] };
+
+function buildShowPDFBlob(entries, headerText){
+  const pageW = 595.28, pageH = 841.89; // A4 in pt
+  const margin = 22.68; // ~8mm
+  const contentW = pageW - margin*2;
+
+  let nextId = 4; // 1=Catalog, 2=Pages, 3=Font
+  const pages = entries.map(e=>{
+    const pageId = nextId++, contentId = nextId++;
+    let img1Id=null, img2Id=null, img1Bytes=null, img2Bytes=null, img1Dim=null, img2Dim=null;
+    if(e.bild1){ img1Bytes = dataUrlToBytes(e.bild1); img1Dim = getJpegDimensions(img1Bytes); img1Id = nextId++; }
+    if(e.bild2){ img2Bytes = dataUrlToBytes(e.bild2); img2Dim = getJpegDimensions(img2Bytes); img2Id = nextId++; }
+    return { entry:e, pageId, contentId, img1Id, img2Id, img1Bytes, img2Bytes, img1Dim, img2Dim };
+  });
+
+  const pageContents = pages.map(p=>{
+    const e = p.entry;
+    const kategorie = e.kategorie || 'Einleuchten';
+    const katColor = KAT_COLOR[kategorie] || KAT_COLOR['Einleuchten'];
+    let y = pageH - margin;
+    let ops = '';
+
+    if(headerText){
+      ops += pdfTextOp(headerText, margin, y-9, 9, [0.45,0.45,0.45], contentW, 'center');
+      y -= 9*1.7;
+    }
+    const badgeW = 78, badgeH = 16;
+    ops += 'q '+katColor[0]+' '+katColor[1]+' '+katColor[2]+' rg '+margin.toFixed(2)+' '+(y-badgeH).toFixed(2)+' '+badgeW+' '+badgeH+' re f Q\n';
+    ops += pdfTextOp(kategorie, margin+7, y-badgeH+5, 8.5, [1,1,1]);
+    y -= badgeH + 12;
+
+    const imgCount = (p.img1Id?1:0) + (p.img2Id?1:0);
+    if(imgCount === 1){
+      const sz = Math.max(140, Math.min(contentW, y - margin - 95, 470));
+      const x = margin + (contentW - sz)/2;
+      const imgY = y - sz;
+      ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im1 Do Q\n';
+      y = imgY - 14;
+    } else if(imgCount === 2){
+      const sz = Math.min(contentW, 300);
+      const gap = 12;
+      const x = margin + (contentW - sz)/2;
+      let imgY = y - sz;
+      ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im1 Do Q\n';
+      imgY -= (sz + gap);
+      ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im2 Do Q\n';
+      y = imgY - 14;
+    }
+
+    const line1 = 'Kreis: '+(e.kreis||'-')+'    Filter: '+(e.filter||'-')+'    Adresse: '+(e.adresse||'-');
+    wrapPdfText(line1, contentW, 10.5).forEach(l=>{ ops += pdfTextOp(l, margin, y, 10.5, [0,0,0]); y -= 15; });
+    if(e.gruppe || e.bemerkung){
+      const line2 = 'Gruppe: '+(e.gruppe||'-')+'    Bemerkung: '+(e.bemerkung||'-');
+      wrapPdfText(line2, contentW, 10.5).forEach(l=>{ ops += pdfTextOp(l, margin, y, 10.5, [0,0,0]); y -= 15; });
+    }
+    return ops;
+  });
+
+  const chunks = [];
+  let offset = 0;
+  const xref = {};
+  function put(part){
+    const bytes = (typeof part === 'string') ? strToLatin1Bytes(part) : part;
+    chunks.push(bytes);
+    offset += bytes.length;
+  }
+  function beginObj(id){ xref[id] = offset; put(id+' 0 obj\n'); }
+  function endObj(){ put('endobj\n'); }
+
+  put('%PDF-1.4\n');
+  beginObj(1); put('<< /Type /Catalog /Pages 2 0 R >>\n'); endObj();
+  const kids = pages.map(p=>p.pageId+' 0 R').join(' ');
+  beginObj(2); put('<< /Type /Pages /Kids ['+kids+'] /Count '+pages.length+' >>\n'); endObj();
+  beginObj(3); put('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\n'); endObj();
+
+  pages.forEach((p,i)=>{
+    const resXObj = [];
+    if(p.img1Id) resXObj.push('/Im1 '+p.img1Id+' 0 R');
+    if(p.img2Id) resXObj.push('/Im2 '+p.img2Id+' 0 R');
+    const resources = '<< /Font << /F1 3 0 R >>'+(resXObj.length? ' /XObject << '+resXObj.join(' ')+' >>':'')+' >>';
+
+    beginObj(p.pageId);
+    put('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+pageW+' '+pageH+'] /Resources '+resources+' /Contents '+p.contentId+' 0 R >>\n');
+    endObj();
+
+    const contentBytes = strToLatin1Bytes(pageContents[i]);
+    beginObj(p.contentId);
+    put('<< /Length '+contentBytes.length+' >>\nstream\n');
+    put(contentBytes);
+    put('\nendstream\n');
+    endObj();
+
+    if(p.img1Id){
+      beginObj(p.img1Id);
+      put('<< /Type /XObject /Subtype /Image /Width '+p.img1Dim.width+' /Height '+p.img1Dim.height+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+p.img1Bytes.length+' >>\nstream\n');
+      put(p.img1Bytes);
+      put('\nendstream\n');
+      endObj();
+    }
+    if(p.img2Id){
+      beginObj(p.img2Id);
+      put('<< /Type /XObject /Subtype /Image /Width '+p.img2Dim.width+' /Height '+p.img2Dim.height+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+p.img2Bytes.length+' >>\nstream\n');
+      put(p.img2Bytes);
+      put('\nendstream\n');
+      endObj();
+    }
+  });
+
+  const xrefStart = offset;
+  const maxId = nextId - 1;
+  let xrefStr = 'xref\n0 '+(maxId+1)+'\n0000000000 65535 f \n';
+  for(let id=1; id<=maxId; id++){
+    const off = xref[id] !== undefined ? xref[id] : 0;
+    xrefStr += String(off).padStart(10,'0')+' 00000 n \n';
+  }
+  put(xrefStr);
+  put('trailer\n<< /Size '+(maxId+1)+' /Root 1 0 R >>\nstartxref\n'+xrefStart+'\n%%EOF');
+
+  return new Blob(chunks, { type:'application/pdf' });
+}
+
+function downloadOrOpenBlob(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.target = '_blank'; a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 30000);
+}
+function pdfFilenameFor(show){
+  const base = (show.name || 'Lichtdoku').replace(/[^a-z0-9]+/gi,'_');
+  const suffix = (state.categoryFilter && state.categoryFilter !== 'Alle') ? '_'+state.categoryFilter : '';
+  return base + suffix + '.pdf';
+}
+
+/* ===================== PDF-Export & Teilen ===================== */
 function exportPDF(){
   const show = loadShows().find(s=>s.id===state.showId);
   const entries = getVisibleEntries(show);
   if(entries.length === 0){ toast('Keine Einträge zum Exportieren'); return; }
   const headerText = show.name + (state.categoryFilter && state.categoryFilter !== 'Alle' ? ' – '+state.categoryFilter : '');
-  let html = '';
-  entries.forEach(e=>{ html += cardTemplate(e, {editable:false, docHeader:headerText}); });
-  byId('printArea').innerHTML = html;
-  // WICHTIG: window.print() muss synchron im Klick-Handler laufen – ein setTimeout/await
-  // davor lässt iOS Safari die Nutzer-Geste verfallen und der Druckdialog öffnet sich nicht.
-  window.print();
+  let blob;
+  try{ blob = buildShowPDFBlob(entries, headerText); }
+  catch(err){ console.error(err); toast('PDF-Erstellung fehlgeschlagen'); return; }
+  // Direkter, synchroner Aufruf (kein await/setTimeout davor) – auf iOS öffnet sich
+  // die PDF-Datei im eingebauten PDF-Viewer (mit Teilen/Sichern-Button oben),
+  // auf dem Desktop wird sie direkt heruntergeladen.
+  downloadOrOpenBlob(blob, pdfFilenameFor(show));
 }
 
-/* ===================== Teilen ===================== */
+async function sharePDF(){
+  const show = loadShows().find(s=>s.id===state.showId);
+  const entries = getVisibleEntries(show);
+  if(entries.length === 0){ toast('Keine Einträge zum Teilen'); return; }
+  const headerText = show.name + (state.categoryFilter && state.categoryFilter !== 'Alle' ? ' – '+state.categoryFilter : '');
+  let blob;
+  try{ blob = buildShowPDFBlob(entries, headerText); }
+  catch(err){ console.error(err); toast('PDF-Erstellung fehlgeschlagen'); return; }
+  const filename = pdfFilenameFor(show);
+  const file = new File([blob], filename, { type:'application/pdf' });
+  try{
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({ files:[file], title: show.name });
+      return;
+    }
+  }catch(err){ return; } // Nutzer hat Teilen abgebrochen
+  // Fallback: PDF öffnen, von dort aus manuell teilen/sichern
+  downloadOrOpenBlob(blob, filename);
+}
+
+/* ===================== Einzelnes Foto teilen ===================== */
 function dataURLtoFile(dataurl, filename){
   const arr = dataurl.split(',');
   const mimeMatch = arr[0].match(/:(.*?);/);
@@ -1060,8 +1267,8 @@ async function shareEntry(id){
   if(!e) return;
   const text = 'Kreis: '+(e.kreis||'-')+'\nFilter: '+(e.filter||'-')+'\nBemerkung: '+(e.bemerkung||'-');
   const files = [];
-  if(e.bild1) files.push(dataURLtoFile(e.bild1, 'kreis_'+e.kreis+'_1.jpg'));
-  if(e.bild2) files.push(dataURLtoFile(e.bild2, 'kreis_'+e.kreis+'_2.jpg'));
+  if(e.bild1) files.push(dataURLtoFile(e.bild1, 'kreis_'+(e.kreis||'x')+'_1.jpg'));
+  if(e.bild2) files.push(dataURLtoFile(e.bild2, 'kreis_'+(e.kreis||'x')+'_2.jpg'));
   try{
     if(navigator.canShare && files.length && navigator.canShare({files})){
       await navigator.share({files:files, title:'Lichtdoku – Kreis '+e.kreis, text:text});
@@ -1072,32 +1279,6 @@ async function shareEntry(id){
       toast('Kein Teilen verfügbar – Text kopiert');
     }
   }catch(err){ /* Nutzer hat Teilen abgebrochen */ }
-}
-
-async function shareShowSummary(){
-  const show = loadShows().find(s=>s.id===state.showId);
-  const entries = getVisibleEntries(show);
-  if(entries.length === 0){ toast('Keine Einträge zum Teilen'); return; }
-  let text = show.name + (show.date? ' ('+show.date+')' : '') + '\n\n';
-  const files = [];
-  entries.forEach(e=>{
-    text += '['+(e.kategorie||'Einleuchten')+'] Kreis: '+(e.kreis||'-')+' | Filter: '+(e.filter||'-')+
-      (e.adresse? ' | Adresse: '+e.adresse : '') + (e.bemerkung? ' | '+e.bemerkung : '') + '\n';
-    if(e.bild1) files.push(dataURLtoFile(e.bild1, 'kreis_'+(e.kreis||'x')+'_1.jpg'));
-    if(e.bild2) files.push(dataURLtoFile(e.bild2, 'kreis_'+(e.kreis||'x')+'_2.jpg'));
-  });
-  try{
-    if(navigator.canShare && files.length && navigator.canShare({files})){
-      // Mit Fotos teilen (z.B. AirDrop, Mail, WhatsApp) – bei sehr vielen Bildern
-      // kann das Betriebssystem die Anzahl begrenzen; dann lieber den PDF-Export nutzen.
-      await navigator.share({files:files, title:show.name, text:text});
-    } else if(navigator.share){
-      await navigator.share({title:show.name, text:text});
-    } else {
-      await navigator.clipboard.writeText(text);
-      toast('Zusammenfassung kopiert');
-    }
-  }catch(err){}
 }
 
 function exportJSON(){

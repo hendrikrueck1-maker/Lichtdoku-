@@ -11,6 +11,7 @@
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <title>Lichtdoku</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root{
     --bg:#0b0c10; --bg2:#12141a; --card-dark:#1a1d24; --card-dark2:#20242d; --border:#2b2f3a;
@@ -219,7 +220,7 @@
 
 <script>
 /* ===================== Version & Updates ===================== */
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 function registerServiceWorker(){
   if(!('serviceWorker' in navigator)) return;
@@ -314,6 +315,14 @@ function idbPut(key, value){
     tx.onerror = ()=> reject(tx.error);
   }));
 }
+function idbGet(key){
+  return idbOpen().then(db=> new Promise((resolve, reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(key);
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  }));
+}
 
 /* Einmalige Migration: alte localStorage-Daten (falls vorhanden) in
    IndexedDB übernehmen und danach aus localStorage entfernen, damit der
@@ -371,6 +380,288 @@ function saveEntries(showId, e){
     toast('⚠️ Speichern fehlgeschlagen. Bitte Backup (JSON) sichern.');
   });
   return true;
+}
+
+/* ===================== Google Drive Sync (ab v1.4.0) ===================== */
+/* Jede Veranstaltung wird als eigene Datei "<showId>.json" (Show + Einträge,
+   inkl. Fotos als Base64) in einem App-eigenen Drive-Ordner abgelegt.
+   Ablauf: lokale Änderung -> nach kurzer Pause automatischer Upload, sofern
+   online & verbunden. Beim App-Start, beim Öffnen einer Show und sobald die
+   Internetverbindung wiederkommt, wird zusätzlich automatisch geprüft, ob auf
+   Drive neuere Stände liegen (von einem anderen Gerät) und lädt diese herunter.
+   Scope "drive.file": die App sieht NUR den von ihr selbst angelegten Ordner,
+   nicht das restliche Drive-Konto. Es wird kein Client-Secret verwendet (im
+   Browser nicht nötig und nicht sicher speicherbar) – nur die Client-ID. */
+const DRIVE_CLIENT_ID = '366571690468-uc0a00bl4hn144tqlh5bsm064qikmd91.apps.googleusercontent.com';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_FOLDER_NAME = 'Lichtdoku Sync';
+const DRIVE_API = 'https://www.googleapis.com/drive/v3';
+const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
+
+let driveSync = {
+  tokenClient: null,
+  accessToken: null,
+  tokenExpiresAt: 0,
+  folderId: null,
+  connected: false,
+  syncing: false,
+  dirty: new Set(),
+  syncTimer: null,
+  lastSyncAt: null
+};
+
+async function loadDriveSettings(){
+  try{
+    const s = await idbGet('ld_drive_settings');
+    if(s){ driveSync.folderId = s.folderId || null; driveSync.connected = !!s.connected; }
+  }catch(e){}
+  try{
+    const pending = await idbGet('ld_drive_pending');
+    if(Array.isArray(pending)) driveSync.dirty = new Set(pending);
+  }catch(e){}
+}
+function saveDriveSettings(){
+  idbPut('ld_drive_settings', { folderId: driveSync.folderId, connected: driveSync.connected }).catch(()=>{});
+}
+function persistDirtySet(){
+  idbPut('ld_drive_pending', Array.from(driveSync.dirty)).catch(()=>{});
+}
+
+async function initDriveSync(){
+  await loadDriveSettings();
+  if(driveSync.connected && driveSync.folderId){
+    setupTokenClient();
+    if(navigator.onLine){
+      try{ await requestDriveToken(true); await flushPendingSync(); await pullAllShows(); }
+      catch(err){ /* still keine aktive Google-Sitzung -> Symbol zeigt "bitte antippen" */ }
+    }
+  }
+  window.addEventListener('online', ()=>{
+    if(!driveSync.connected) return;
+    requestDriveToken(true).then(()=>{ flushPendingSync(); pullAllShows(); }).catch(()=>{});
+  });
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState === 'visible' && driveSync.connected && navigator.onLine){
+      requestDriveToken(true).then(()=> pullAllShows()).catch(()=>{});
+    }
+  });
+  renderApp();
+}
+
+function setupTokenClient(){
+  if(driveSync.tokenClient || !window.google || !google.accounts || !google.accounts.oauth2) return;
+  driveSync.tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: DRIVE_CLIENT_ID, scope: DRIVE_SCOPE, callback: ()=>{}
+  });
+}
+function requestDriveToken(silent){
+  return new Promise((resolve, reject)=>{
+    if(!window.google || !google.accounts || !google.accounts.oauth2){
+      reject(new Error('Google-Bibliothek noch nicht geladen')); return;
+    }
+    setupTokenClient();
+    if(driveSync.accessToken && Date.now() < driveSync.tokenExpiresAt - 30000){
+      resolve(driveSync.accessToken); return;
+    }
+    driveSync.tokenClient.callback = (resp)=>{
+      if(!resp || resp.error){ reject(new Error((resp&&resp.error)||'Token-Fehler')); return; }
+      driveSync.accessToken = resp.access_token;
+      driveSync.tokenExpiresAt = Date.now() + (resp.expires_in||3600)*1000;
+      resolve(driveSync.accessToken);
+    };
+    try{ driveSync.tokenClient.requestAccessToken({ prompt: silent ? '' : 'consent' }); }
+    catch(err){ reject(err); }
+  });
+}
+
+async function ensureDriveFolder(){
+  if(driveSync.folderId) return driveSync.folderId;
+  const token = await requestDriveToken(true);
+  const q = encodeURIComponent("name='"+DRIVE_FOLDER_NAME+"' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+  const res = await fetch(DRIVE_API+'/files?q='+q+'&fields=files(id,name)', { headers:{ Authorization:'Bearer '+token } });
+  const data = await res.json();
+  if(data.files && data.files.length){
+    driveSync.folderId = data.files[0].id;
+  } else {
+    const createRes = await fetch(DRIVE_API+'/files', {
+      method:'POST',
+      headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+      body: JSON.stringify({ name:DRIVE_FOLDER_NAME, mimeType:'application/vnd.google-apps.folder' })
+    });
+    const created = await createRes.json();
+    driveSync.folderId = created.id;
+  }
+  saveDriveSettings();
+  return driveSync.folderId;
+}
+
+async function connectDriveFlow(){
+  try{
+    await requestDriveToken(false);
+    toast('Verbunden – richte Ordner ein…');
+    await ensureDriveFolder();
+    driveSync.connected = true;
+    saveDriveSettings();
+    toast('☁️ Drive verbunden ("'+DRIVE_FOLDER_NAME+'")');
+    await pullAllShows();
+    await flushPendingSync();
+  }catch(err){
+    console.error(err);
+    toast('Drive-Verbindung fehlgeschlagen oder abgebrochen');
+  }
+  renderApp();
+}
+function disconnectDrive(){
+  if(!confirm('Drive-Sync trennen? Deine lokalen Dokumentationen bleiben auf diesem Gerät erhalten, werden aber nicht mehr automatisch gesichert.')) return;
+  driveSync.connected = false;
+  driveSync.accessToken = null;
+  driveSync.tokenExpiresAt = 0;
+  saveDriveSettings();
+  toast('Drive-Sync getrennt');
+  renderApp();
+}
+
+function markShowDirty(showId){
+  if(!showId || !driveSync.connected) return;
+  driveSync.dirty.add(showId);
+  persistDirtySet();
+  clearTimeout(driveSync.syncTimer);
+  driveSync.syncTimer = setTimeout(flushPendingSync, 2000);
+  renderApp();
+}
+
+async function flushPendingSync(){
+  if(!driveSync.connected || !navigator.onLine || driveSync.dirty.size === 0) return;
+  driveSync.syncing = true; renderApp();
+  let token;
+  try{ token = await requestDriveToken(true); }
+  catch(err){ driveSync.syncing = false; renderApp(); return; }
+  const ids = Array.from(driveSync.dirty);
+  for(const id of ids){
+    try{ await uploadShowToDrive(id, token); driveSync.dirty.delete(id); persistDirtySet(); }
+    catch(err){ console.error('Sync fehlgeschlagen für', id, err); }
+  }
+  driveSync.syncing = false;
+  driveSync.lastSyncAt = Date.now();
+  renderApp();
+}
+
+async function uploadShowToDrive(showId, token){
+  const shows = loadShows();
+  const show = shows.find(s=>s.id===showId);
+  if(!show) return;
+  const entries = loadEntries(showId);
+  token = token || await requestDriveToken(true);
+  const folderId = await ensureDriveFolder();
+  const fileName = showId + '.json';
+  let fileId = show.driveFileId;
+  if(!fileId){
+    const q = encodeURIComponent("name='"+fileName+"' and '"+folderId+"' in parents and trashed=false");
+    const searchRes = await fetch(DRIVE_API+'/files?q='+q+'&fields=files(id)', { headers:{ Authorization:'Bearer '+token } });
+    const searchData = await searchRes.json();
+    if(searchData.files && searchData.files.length) fileId = searchData.files[0].id;
+  }
+  const metadata = fileId ? {} : { name:fileName, parents:[folderId] };
+  const initUrl = fileId
+    ? DRIVE_UPLOAD_API+'/files/'+fileId+'?uploadType=resumable'
+    : DRIVE_UPLOAD_API+'/files?uploadType=resumable';
+  const initRes = await fetch(initUrl, {
+    method: fileId ? 'PATCH' : 'POST',
+    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json; charset=UTF-8' },
+    body: JSON.stringify(metadata)
+  });
+  if(!initRes.ok) throw new Error('Drive-Upload-Init fehlgeschlagen: '+initRes.status);
+  const uploadUrl = initRes.headers.get('Location');
+  const payload = JSON.stringify({ show, entries, syncedAt:Date.now() });
+  const putRes = await fetch(uploadUrl, { method:'PUT', headers:{ 'Content-Type':'application/json' }, body: payload });
+  if(!putRes.ok) throw new Error('Drive-Upload fehlgeschlagen: '+putRes.status);
+  const putData = await putRes.json();
+  const shows2 = loadShows();
+  const idx = shows2.findIndex(s=>s.id===showId);
+  if(idx>=0){
+    shows2[idx].driveFileId = putData.id;
+    shows2[idx].driveKnownModified = Date.now();
+    saveShows(shows2);
+  }
+}
+
+async function deleteDriveFile(fileId){
+  try{
+    const token = await requestDriveToken(true);
+    await fetch(DRIVE_API+'/files/'+fileId, { method:'DELETE', headers:{ Authorization:'Bearer '+token } });
+  }catch(err){ /* best effort */ }
+}
+
+async function pullAllShows(){
+  if(!driveSync.connected || !navigator.onLine) return;
+  try{
+    const token = await requestDriveToken(true);
+    const folderId = await ensureDriveFolder();
+    const q = encodeURIComponent("'"+folderId+"' in parents and trashed=false and name contains '.json'");
+    const res = await fetch(DRIVE_API+'/files?q='+q+'&fields=files(id,name,modifiedTime)&pageSize=1000', { headers:{ Authorization:'Bearer '+token } });
+    const data = await res.json();
+    const files = data.files || [];
+    for(const f of files){ await pullOneFile(f, token); }
+    renderApp();
+  }catch(err){ console.error('Drive-Abgleich fehlgeschlagen', err); }
+}
+
+async function pullOneFile(f, token){
+  const showId = f.name.replace(/\.json$/,'');
+  if(driveSync.dirty.has(showId)) return; // lokale Änderung wartet noch auf Upload -> nicht überschreiben
+  const shows = loadShows();
+  const localShow = shows.find(s=>s.id===showId);
+  const remoteTime = new Date(f.modifiedTime).getTime();
+  if(localShow && localShow.driveKnownModified && remoteTime <= localShow.driveKnownModified) return;
+  try{
+    const res = await fetch(DRIVE_API+'/files/'+f.id+'?alt=media', { headers:{ Authorization:'Bearer '+token } });
+    if(!res.ok) return;
+    const payload = await res.json();
+    if(!payload.show || !payload.entries) return;
+    const shows2 = loadShows();
+    const idx = shows2.findIndex(s=>s.id===showId);
+    const mergedShow = Object.assign({}, payload.show, { id:showId, driveFileId:f.id, driveKnownModified:remoteTime });
+    if(idx>=0) shows2[idx] = mergedShow; else shows2.push(mergedShow);
+    saveShows(shows2);
+    saveEntries(showId, payload.entries);
+  }catch(err){ console.error('Pull fehlgeschlagen für', showId, err); }
+}
+
+async function syncNowManual(){
+  if(!driveSync.connected){ connectDriveFlow(); return; }
+  try{
+    await requestDriveToken(true);
+  }catch(err){
+    try{ await requestDriveToken(false); }catch(e2){ toast('Anmeldung bei Google nötig – bitte erneut versuchen'); return; }
+  }
+  toast('Synchronisiere…');
+  await flushPendingSync();
+  await pullAllShows();
+  toast('☁️ Aktuell');
+}
+
+function driveSyncIcon(){
+  if(!driveSync.connected) return '☁️';
+  if(driveSync.syncing) return '🔄';
+  if(driveSync.dirty.size>0) return navigator.onLine ? '⏳' : '⚠️';
+  return '☁️✅';
+}
+function driveSyncTitle(){
+  if(!driveSync.connected) return 'Drive-Sync einrichten';
+  if(driveSync.syncing) return 'Synchronisiere…';
+  if(driveSync.dirty.size>0) return navigator.onLine ? 'Wird synchronisiert…' : 'Offline – wird bei Verbindung automatisch synchronisiert';
+  if(driveSync.lastSyncAt) return 'Zuletzt synchronisiert: '+new Date(driveSync.lastSyncAt).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+  return 'Mit Drive verbunden';
+}
+function driveStatusText(){
+  if(driveSync.syncing) return 'Synchronisiere…';
+  if(driveSync.dirty.size>0) return navigator.onLine ? (driveSync.dirty.size+' Änderung(en) werden übertragen…') : (driveSync.dirty.size+' Änderung(en) warten auf Internetverbindung');
+  if(driveSync.lastSyncAt) return 'Zuletzt synchronisiert: '+new Date(driveSync.lastSyncAt).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+  return 'Automatische Sicherung aktiv';
+}
+function driveIconTap(){
+  if(!driveSync.connected) connectDriveFlow();
+  else syncNowManual();
 }
 
 /* ===================== State ===================== */
@@ -643,6 +934,7 @@ function deleteEntryImage(entryId, slot){
   if(slot === 1) entries[idx].bild1 = null; else entries[idx].bild2 = null;
   entries[idx].updatedAt = Date.now();
   saveEntries(state.showId, entries);
+  markShowDirty(state.showId);
   renderApp();
 }
 
@@ -673,6 +965,7 @@ byId('jsonImportInput').addEventListener('change', (e)=>{
         shows.push(data.show);
         saveShows(shows);
         saveEntries(data.show.id, data.entries);
+        markShowDirty(data.show.id);
         toast('Veranstaltung importiert');
         state.view='home'; renderApp();
       } else { toast('Ungültige Datei'); }
@@ -742,11 +1035,21 @@ function renderHome(){
   const shows = loadShows().sort((a,b)=> (b.createdAt||0) - (a.createdAt||0));
   let html = '';
   html += '<div class="topbar"><h1>🎭 Lichtdoku</h1>';
+  html += '<button class="iconbtn" onclick="driveIconTap()" title="'+driveSyncTitle()+'">'+driveSyncIcon()+'</button>';
   html += '<button class="iconbtn" onclick="checkForUpdate(true)" title="Nach Updates suchen">🔄</button>';
   html += '<button class="iconbtn" onclick="triggerImport()" title="Import">⬆️</button>';
   html += '</div>';
   html += '<div class="content">';
   html += '<div class="fab-row"><button class="btn-primary" onclick="newShow()">＋ Neue Veranstaltung / Stück</button></div>';
+  html += '<div class="show-item" style="margin-bottom:18px;">';
+  if(driveSync.connected){
+    html += '<div class="meta"><div class="name">☁️ Drive-Sync aktiv</div><div class="count">'+driveStatusText()+'</div></div>';
+    html += '<div class="show-actions"><button onclick="syncNowManual()">🔄</button><button class="btn-danger" onclick="disconnectDrive()">Trennen</button></div>';
+  } else {
+    html += '<div class="meta"><div class="name">☁️ Drive-Sync</div><div class="count">Automatische Sicherung & Offline-Zugriff auf allen Geräten</div></div>';
+    html += '<div class="show-actions"><button class="btn-primary" onclick="connectDriveFlow()">Verbinden</button></div>';
+  }
+  html += '</div>';
   if(shows.length === 0){
     html += '<div class="empty-hint">Noch keine Veranstaltung angelegt.<br>Erstelle eine neue Dokumentation für dein Stück oder Event.</div>';
   } else {
@@ -775,6 +1078,7 @@ function newShow(){
   shows.push(show);
   saveShows(shows);
   saveEntries(show.id, []);
+  markShowDirty(show.id);
   openShow(show.id);
 }
 function deleteShow(id){
@@ -784,11 +1088,14 @@ function deleteShow(id){
   saveShows(loadShows().filter(x=>x.id!==id));
   delete storageCache.entries[id];
   idbPut('ld_entries_'+id, []).catch(()=>{});
+  driveSync.dirty.delete(id);
+  if(driveSync.connected && s.driveFileId) deleteDriveFile(s.driveFileId);
   renderApp();
 }
 function openShow(id){
   state.view='show'; state.showId=id; state.showTab='overview'; state.search='';
   renderApp();
+  if(driveSync.connected && navigator.onLine) pullAllShows();
 }
 function triggerImport(){ byId('jsonImportInput').click(); }
 
@@ -802,6 +1109,7 @@ function renderShow(){
   html += '<button class="iconbtn" onclick="backHome()">←</button>';
   html += '<div style="flex:1;min-width:0;"><h1>'+escapeHtml(show.name)+'</h1>';
   html += '<div class="sub">'+(show.date?escapeHtml(show.date):'')+'</div></div>';
+  html += '<button class="iconbtn" onclick="driveIconTap()" title="'+driveSyncTitle()+'">'+driveSyncIcon()+'</button>';
   html += '<button class="iconbtn" onclick="renameShow()" title="Titel bearbeiten">✏️</button>';
   html += '</div>';
   html += '<div class="mode-toggle">';
@@ -837,6 +1145,7 @@ function renameShow(){
     shows[idx].name = name.trim() || shows[idx].name;
     shows[idx].date = date.trim();
     saveShows(shows);
+    markShowDirty(show.id);
   }
   renderApp();
 }
@@ -955,6 +1264,7 @@ function deleteEntry(id){
   let entries = loadEntries(state.showId);
   entries = entries.filter(e=>e.id!==id);
   saveEntries(state.showId, entries);
+  markShowDirty(state.showId);
   renderApp();
 }
 
@@ -1084,6 +1394,7 @@ function saveEntry(){
   }
   const ok = saveEntries(state.showId, entries);
   if(!ok){ return; } // Fehlermeldung kam bereits aus saveEntries(); Formular bleibt offen, nichts geht verloren
+  markShowDirty(state.showId);
   tempImages = { bild1:null, bild2:null };
   formDraft = null;
   state.editId = null;
@@ -1379,7 +1690,7 @@ function exportJSON(){
 initLightbox();
 registerServiceWorker();
 initVersionCheck();
-initStorage().then(renderApp);
+initStorage().then(()=>{ renderApp(); initDriveSync(); });
 </script>
 </body>
 </html>

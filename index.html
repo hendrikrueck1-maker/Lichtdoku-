@@ -37,12 +37,13 @@
 
   /* Top bar (scrollt normal mit, ist NICHT fixiert) */
   .topbar{background:var(--bg2);
-    display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 14px 12px;
+    display:flex;flex-wrap:wrap;align-items:center;gap:10px;
+    padding:calc(18px + env(safe-area-inset-top)) calc(18px + env(safe-area-inset-right)) 14px calc(18px + env(safe-area-inset-left));
     border-bottom:1px solid var(--border);}
   .topbar h1{font-size:19px;font-weight:700;margin:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .topbar .sub{font-size:12px;color:var(--muted);margin-top:1px;}
-  .iconbtn{background:transparent;color:var(--text);padding:8px 10px;font-size:19px;border-radius:var(--radius-sm);}
-  .tb-row{width:100%;display:flex;align-items:center;gap:8px;}
+  .iconbtn{background:transparent;color:var(--text);padding:10px 12px;font-size:19px;border-radius:var(--radius-sm);}
+  .tb-row{width:100%;display:flex;align-items:center;gap:10px;}
   .mode-toggle{display:flex;gap:4px;width:100%;background:var(--card-dark);border-radius:999px;padding:4px;}
   .mode-toggle button{flex:1;background:transparent;color:var(--muted);font-size:13px;padding:9px;
     border-radius:999px;}
@@ -162,8 +163,8 @@
   .lightbox.hidden{display:none;}
   .lightbox img{max-width:100vw;max-height:100vh;touch-action:none;user-select:none;
     -webkit-user-drag:none;transform-origin:0 0;}
-  .lb-close{position:absolute;top:14px;right:16px;color:#fff;font-size:24px;z-index:6;
-    padding:8px 14px;background:rgba(255,255,255,.14);border-radius:50%;line-height:1;}
+  .lb-close{position:absolute;top:calc(20px + env(safe-area-inset-top));right:calc(20px + env(safe-area-inset-right));color:#fff;font-size:24px;z-index:6;
+    padding:11px 17px;background:rgba(255,255,255,.14);border-radius:50%;line-height:1;}
   .lb-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.14);
     color:#fff;border:none;font-size:32px;width:50px;height:64px;border-radius:10px;z-index:6;
     line-height:1;padding:0;}
@@ -220,7 +221,7 @@
 
 <script>
 /* ===================== Version & Updates ===================== */
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 function registerServiceWorker(){
   if(!('serviceWorker' in navigator)) return;
@@ -407,7 +408,9 @@ let driveSync = {
   syncing: false,
   dirty: new Set(),
   syncTimer: null,
-  lastSyncAt: null
+  heartbeatTimer: null,
+  lastSyncAt: null,
+  authError: false
 };
 
 async function loadDriveSettings(){
@@ -432,20 +435,33 @@ async function initDriveSync(){
   if(driveSync.connected && driveSync.folderId){
     setupTokenClient();
     if(navigator.onLine){
-      try{ await requestDriveToken(true); await flushPendingSync(); await pullAllShows(); }
-      catch(err){ /* still keine aktive Google-Sitzung -> Symbol zeigt "bitte antippen" */ }
+      try{ await requestDriveToken(true); driveSync.authError=false; await flushPendingSync(); await pullAllShows(); }
+      catch(err){ driveSync.authError = true; /* Symbol zeigt "bitte antippen" */ }
     }
   }
-  window.addEventListener('online', ()=>{
-    if(!driveSync.connected) return;
-    requestDriveToken(true).then(()=>{ flushPendingSync(); pullAllShows(); }).catch(()=>{});
-  });
+  window.addEventListener('online', ()=> driveHeartbeat());
   document.addEventListener('visibilitychange', ()=>{
-    if(document.visibilityState === 'visible' && driveSync.connected && navigator.onLine){
-      requestDriveToken(true).then(()=> pullAllShows()).catch(()=>{});
-    }
+    if(document.visibilityState === 'visible') driveHeartbeat();
   });
+  /* Regelmäßiger Hintergrund-Abgleich (alle 30s, solange App sichtbar & online),
+     damit Änderungen von einem zweiten Gerät (z.B. Pixel <-> iPad) auch dann
+     ankommen, wenn niemand gerade etwas speichert oder die App neu öffnet –
+     und ein einmalig fehlgeschlagener stiller Token-Refresh sich selbst
+     repariert statt dauerhaft "hängen" zu bleiben. */
+  startDriveHeartbeat();
   renderApp();
+}
+function startDriveHeartbeat(){
+  if(driveSync.heartbeatTimer) return;
+  driveSync.heartbeatTimer = setInterval(driveHeartbeat, 30000);
+}
+function driveHeartbeat(){
+  if(!driveSync.connected || !navigator.onLine || document.visibilityState !== 'visible') return;
+  requestDriveToken(true).then(()=>{
+    driveSync.authError = false;
+    flushPendingSync();
+    pullAllShows();
+  }).catch(()=>{ driveSync.authError = true; renderApp(); });
 }
 
 function setupTokenClient(){
@@ -534,11 +550,16 @@ async function flushPendingSync(){
   if(!driveSync.connected || !navigator.onLine || driveSync.dirty.size === 0) return;
   driveSync.syncing = true; renderApp();
   let token;
-  try{ token = await requestDriveToken(true); }
-  catch(err){ driveSync.syncing = false; renderApp(); return; }
+  try{ token = await requestDriveToken(true); driveSync.authError = false; }
+  catch(err){ driveSync.syncing = false; driveSync.authError = true; renderApp(); return; }
   const ids = Array.from(driveSync.dirty);
   for(const id of ids){
-    try{ await uploadShowToDrive(id, token); driveSync.dirty.delete(id); persistDirtySet(); }
+    try{
+      await uploadShowToDrive(id, token);
+      driveSync.dirty.delete(id);
+      persistDirtySet();
+      backupShowPDFToDrive(id, token).catch(()=>{}); // stiller PDF-Snapshot, Fehler dabei stoppen den Sync nicht
+    }
     catch(err){ console.error('Sync fehlgeschlagen für', id, err); }
   }
   driveSync.syncing = false;
@@ -592,10 +613,53 @@ async function deleteDriveFile(fileId){
   }catch(err){ /* best effort */ }
 }
 
+/* Automatisches PDF-Backup: nach jedem erfolgreichen Sync wird zusätzlich zur
+   JSON-Datei ein aktuelles PDF der kompletten Show (alle Kategorien) in
+   denselben Drive-Ordner gelegt bzw. überschrieben – ohne Rückfrage, damit
+   im Ordner immer eine lesbare, aktuelle Fassung liegt. */
+async function backupShowPDFToDrive(showId, token){
+  if(!driveSync.connected) return;
+  const shows = loadShows();
+  const show = shows.find(s=>s.id===showId);
+  if(!show) return;
+  const entries = sortEntries(loadEntries(showId));
+  if(entries.length === 0) return;
+  let blob;
+  try{ blob = buildShowPDFBlob(entries, show.name); }catch(err){ return; }
+  token = token || await requestDriveToken(true);
+  const folderId = await ensureDriveFolder();
+  const fileName = (show.name||'Lichtdoku').replace(/[^a-z0-9]+/gi,'_') + '_' + showId + '.pdf';
+  let fileId = show.drivePdfFileId;
+  if(!fileId){
+    const q = encodeURIComponent("name='"+fileName+"' and '"+folderId+"' in parents and trashed=false");
+    const searchRes = await fetch(DRIVE_API+'/files?q='+q+'&fields=files(id)', { headers:{ Authorization:'Bearer '+token } });
+    const searchData = await searchRes.json();
+    if(searchData.files && searchData.files.length) fileId = searchData.files[0].id;
+  }
+  const metadata = fileId ? {} : { name:fileName, parents:[folderId] };
+  const initUrl = fileId
+    ? DRIVE_UPLOAD_API+'/files/'+fileId+'?uploadType=resumable'
+    : DRIVE_UPLOAD_API+'/files?uploadType=resumable';
+  const initRes = await fetch(initUrl, {
+    method: fileId ? 'PATCH' : 'POST',
+    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json; charset=UTF-8' },
+    body: JSON.stringify(metadata)
+  });
+  if(!initRes.ok) throw new Error('PDF-Backup-Init fehlgeschlagen: '+initRes.status);
+  const uploadUrl = initRes.headers.get('Location');
+  const putRes = await fetch(uploadUrl, { method:'PUT', headers:{ 'Content-Type':'application/pdf' }, body: blob });
+  if(!putRes.ok) throw new Error('PDF-Backup-Upload fehlgeschlagen: '+putRes.status);
+  const putData = await putRes.json();
+  const shows2 = loadShows();
+  const idx = shows2.findIndex(s=>s.id===showId);
+  if(idx>=0){ shows2[idx].drivePdfFileId = putData.id; saveShows(shows2); }
+}
+
 async function pullAllShows(){
   if(!driveSync.connected || !navigator.onLine) return;
   try{
     const token = await requestDriveToken(true);
+    driveSync.authError = false;
     const folderId = await ensureDriveFolder();
     const q = encodeURIComponent("'"+folderId+"' in parents and trashed=false and name contains '.json'");
     const res = await fetch(DRIVE_API+'/files?q='+q+'&fields=files(id,name,modifiedTime)&pageSize=1000', { headers:{ Authorization:'Bearer '+token } });
@@ -603,7 +667,7 @@ async function pullAllShows(){
     const files = data.files || [];
     for(const f of files){ await pullOneFile(f, token); }
     renderApp();
-  }catch(err){ console.error('Drive-Abgleich fehlgeschlagen', err); }
+  }catch(err){ console.error('Drive-Abgleich fehlgeschlagen', err); driveSync.authError = true; renderApp(); }
 }
 
 async function pullOneFile(f, token){
@@ -631,8 +695,10 @@ async function syncNowManual(){
   if(!driveSync.connected){ connectDriveFlow(); return; }
   try{
     await requestDriveToken(true);
+    driveSync.authError = false;
   }catch(err){
-    try{ await requestDriveToken(false); }catch(e2){ toast('Anmeldung bei Google nötig – bitte erneut versuchen'); return; }
+    try{ await requestDriveToken(false); driveSync.authError = false; }
+    catch(e2){ driveSync.authError = true; toast('Anmeldung bei Google nötig – bitte erneut versuchen'); renderApp(); return; }
   }
   toast('Synchronisiere…');
   await flushPendingSync();
@@ -643,18 +709,21 @@ async function syncNowManual(){
 function driveSyncIcon(){
   if(!driveSync.connected) return '☁️';
   if(driveSync.syncing) return '🔄';
+  if(driveSync.authError) return '🔑';
   if(driveSync.dirty.size>0) return navigator.onLine ? '⏳' : '⚠️';
   return '☁️✅';
 }
 function driveSyncTitle(){
   if(!driveSync.connected) return 'Drive-Sync einrichten';
   if(driveSync.syncing) return 'Synchronisiere…';
+  if(driveSync.authError) return 'Anmeldung abgelaufen – bitte antippen zum Erneuern';
   if(driveSync.dirty.size>0) return navigator.onLine ? 'Wird synchronisiert…' : 'Offline – wird bei Verbindung automatisch synchronisiert';
   if(driveSync.lastSyncAt) return 'Zuletzt synchronisiert: '+new Date(driveSync.lastSyncAt).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
   return 'Mit Drive verbunden';
 }
 function driveStatusText(){
   if(driveSync.syncing) return 'Synchronisiere…';
+  if(driveSync.authError) return 'Anmeldung abgelaufen – bitte auf 🔑 tippen';
   if(driveSync.dirty.size>0) return navigator.onLine ? (driveSync.dirty.size+' Änderung(en) werden übertragen…') : (driveSync.dirty.size+' Änderung(en) warten auf Internetverbindung');
   if(driveSync.lastSyncAt) return 'Zuletzt synchronisiert: '+new Date(driveSync.lastSyncAt).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
   return 'Automatische Sicherung aktiv';
@@ -670,6 +739,10 @@ let state = { view:'home', showId:null, showTab:'overview', editId:null, search:
 let tempImages = { bild1:null, bild2:null };
 let formDraft = null;
 let cameraState = { stream:null, slot:null, facing:'environment' };
+/* Verhindert, dass "Speichern" gedrückt wird, während ein Foto noch im
+   Hintergrund komprimiert wird (compressImage ist async) – sonst wirkt es
+   so, als würde der Kreis "nicht richtig" oder "erst später" gespeichert. */
+let compressingSlots = new Set();
 
 function byId(id){ return document.getElementById(id); }
 function toast(msg){
@@ -941,15 +1014,21 @@ function deleteEntryImage(entryId, slot){
 /* ===================== Datei-Inputs ===================== */
 byId('fileInput1').addEventListener('change', async (e)=>{
   const f = e.target.files[0]; if(!f) return;
+  compressingSlots.add(1);
   toast('Bild 1 wird komprimiert…');
+  renderApp();
   tempImages.bild1 = await compressImage(f);
+  compressingSlots.delete(1);
   e.target.value = '';
   renderApp();
 });
 byId('fileInput2').addEventListener('change', async (e)=>{
   const f = e.target.files[0]; if(!f) return;
+  compressingSlots.add(2);
   toast('Bild 2 wird komprimiert…');
+  renderApp();
   tempImages.bild2 = await compressImage(f);
+  compressingSlots.delete(2);
   e.target.value = '';
   renderApp();
 });
@@ -1072,9 +1151,8 @@ function renderHome(){
 function newShow(){
   const name = prompt('Name der Veranstaltung / des Stücks:');
   if(!name) return;
-  const date = prompt('Datum / Info (optional):','') || '';
   const shows = loadShows();
-  const show = { id:'s_'+Date.now(), name:name.trim(), date:date.trim(), createdAt:Date.now() };
+  const show = { id:'s_'+Date.now(), name:name.trim(), date:'', createdAt:Date.now() };
   shows.push(show);
   saveShows(shows);
   saveEntries(show.id, []);
@@ -1090,6 +1168,7 @@ function deleteShow(id){
   idbPut('ld_entries_'+id, []).catch(()=>{});
   driveSync.dirty.delete(id);
   if(driveSync.connected && s.driveFileId) deleteDriveFile(s.driveFileId);
+  if(driveSync.connected && s.drivePdfFileId) deleteDriveFile(s.drivePdfFileId);
   renderApp();
 }
 function openShow(id){
@@ -1137,13 +1216,10 @@ function renameShow(){
   if(!show) return;
   const name = prompt('Titel der Veranstaltung / des Stücks:', show.name);
   if(name === null) return;
-  const date = prompt('Datum / Info (optional):', show.date || '');
-  if(date === null) return;
   const shows = loadShows();
   const idx = shows.findIndex(s=>s.id===show.id);
   if(idx >= 0){
     shows[idx].name = name.trim() || shows[idx].name;
-    shows[idx].date = date.trim();
     saveShows(shows);
     markShowDirty(show.id);
   }
@@ -1332,8 +1408,9 @@ function renderFormBody(show){
   html += '<label>Bemerkung / Notizen</label>';
   html += '<textarea id="f_bemerkung" placeholder="Verkabelung, Position, Hinweise…" oninput="updateDraft(\'bemerkung\', this.value)">'+escapeHtml(d.bemerkung)+'</textarea>';
 
+  const busy = compressingSlots.size > 0;
   html += '<div class="form-actions">';
-  html += '<button class="btn-primary" onclick="saveEntry()">💾 Speichern</button>';
+  html += '<button class="btn-primary" onclick="saveEntry()"'+(busy?' style="opacity:.5;"':'')+'>'+(busy?'⏳ Foto wird verarbeitet…':'💾 Speichern')+'</button>';
   html += '<button onclick="cancelForm()">Abbrechen</button>';
   html += '</div>';
   html += '</div>';
@@ -1369,6 +1446,7 @@ function cancelForm(){
 }
 
 function saveEntry(){
+  if(compressingSlots.size > 0){ toast('⏳ Bitte kurz warten – Foto wird noch verarbeitet…'); return; }
   if(!formDraft) formDraft = {};
   let entries = loadEntries(state.showId);
   const now = Date.now();
@@ -1462,14 +1540,15 @@ function getJpegDimensions(bytes){
   }
   return { width: 1000, height: 1000 };
 }
-function pdfTextOp(str, x, y, size, color, maxWidth, align){
+function pdfTextOp(str, x, y, size, color, maxWidth, align, font){
   str = sanitizePdfText(str);
   if(align === 'center' && maxWidth){
     const w = measureTextWidth(str, size);
     x = x + Math.max(0, (maxWidth - w) / 2);
   }
   const c = color || [0,0,0];
-  return 'BT '+c[0]+' '+c[1]+' '+c[2]+' rg /F1 '+size+' Tf '+x.toFixed(2)+' '+y.toFixed(2)+' Td ('+pdfEscape(str)+') Tj ET\n';
+  const f = font || '/F1';
+  return 'BT '+c[0]+' '+c[1]+' '+c[2]+' rg '+f+' '+size+' Tf '+x.toFixed(2)+' '+y.toFixed(2)+' Td ('+pdfEscape(str)+') Tj ET\n';
 }
 const KAT_COLOR = { 'Aufbau':[0.055,0.647,0.914], 'Einleuchten':[0.961,0.647,0.141] };
 
@@ -1477,8 +1556,9 @@ function buildShowPDFBlob(entries, headerText){
   const pageW = 595.28, pageH = 841.89; // A4 in pt
   const margin = 22.68; // ~8mm
   const contentW = pageW - margin*2;
+  const barH = 16; // farbiger Kategorie-Balken oben/unten
 
-  let nextId = 4; // 1=Catalog, 2=Pages, 3=Font
+  let nextId = 5; // 1=Catalog, 2=Pages, 3=Font Helvetica, 4=Font Helvetica-Bold
   const pages = entries.map(e=>{
     const pageId = nextId++, contentId = nextId++;
     let img1Id=null, img2Id=null, img1Bytes=null, img2Bytes=null, img1Dim=null, img2Dim=null;
@@ -1491,41 +1571,60 @@ function buildShowPDFBlob(entries, headerText){
     const e = p.entry;
     const kategorie = e.kategorie || 'Einleuchten';
     const katColor = KAT_COLOR[kategorie] || KAT_COLOR['Einleuchten'];
-    let y = pageH - margin;
     let ops = '';
 
+    // Farbiger Kategorie-Balken über die volle Seitenbreite, oben UND unten
+    ops += 'q '+katColor[0]+' '+katColor[1]+' '+katColor[2]+' rg 0 '+(pageH-barH).toFixed(2)+' '+pageW.toFixed(2)+' '+barH+' re f Q\n';
+    ops += 'q '+katColor[0]+' '+katColor[1]+' '+katColor[2]+' rg 0 0 '+pageW.toFixed(2)+' '+barH+' re f Q\n';
+
+    let y = pageH - margin - 6;
+
     if(headerText){
-      ops += pdfTextOp(headerText, margin, y-9, 9, [0.45,0.45,0.45], contentW, 'center');
-      y -= 9*1.7;
+      ops += pdfTextOp(headerText, margin, y-13, 13, [0.15,0.15,0.15], contentW, 'center', '/F2');
+      y -= 13*1.8;
     }
-    const badgeW = 78, badgeH = 16;
+    const badgeW = 84, badgeH = 17;
     ops += 'q '+katColor[0]+' '+katColor[1]+' '+katColor[2]+' rg '+margin.toFixed(2)+' '+(y-badgeH).toFixed(2)+' '+badgeW+' '+badgeH+' re f Q\n';
-    ops += pdfTextOp(kategorie, margin+7, y-badgeH+5, 8.5, [1,1,1]);
-    y -= badgeH + 12;
+    ops += pdfTextOp(kategorie, margin+8, y-badgeH+5.5, 9, [1,1,1], null, null, '/F2');
+    y -= badgeH + 14;
 
     const imgCount = (p.img1Id?1:0) + (p.img2Id?1:0);
     if(imgCount === 1){
-      const sz = Math.max(140, Math.min(contentW, y - margin - 95, 470));
+      const sz = Math.max(140, Math.min(contentW, y - margin - barH - 120, 450));
       const x = margin + (contentW - sz)/2;
       const imgY = y - sz;
       ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im1 Do Q\n';
-      y = imgY - 14;
+      y = imgY - 16;
     } else if(imgCount === 2){
-      const sz = Math.min(contentW, 300);
+      const sz = Math.min(contentW, 290);
       const gap = 12;
       const x = margin + (contentW - sz)/2;
       let imgY = y - sz;
       ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im1 Do Q\n';
       imgY -= (sz + gap);
       ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im2 Do Q\n';
-      y = imgY - 14;
+      y = imgY - 16;
     }
 
+    // Gerahmter Info-Block für bessere Sichtbarkeit von Kreis/Filter/Adresse/Bemerkung
+    const infoPad = 10;
     const line1 = 'Kreis: '+(e.kreis||'-')+'    Filter: '+(e.filter||'-')+'    Adresse: '+(e.adresse||'-');
-    wrapPdfText(line1, contentW, 10.5).forEach(l=>{ ops += pdfTextOp(l, margin, y, 10.5, [0,0,0]); y -= 15; });
-    if(e.gruppe || e.bemerkung){
+    const lines1 = wrapPdfText(line1, contentW - infoPad*2, 11);
+    const hasLine2 = !!(e.gruppe || e.bemerkung);
+    let lines2 = [];
+    if(hasLine2){
       const line2 = 'Gruppe: '+(e.gruppe||'-')+'    Bemerkung: '+(e.bemerkung||'-');
-      wrapPdfText(line2, contentW, 10.5).forEach(l=>{ ops += pdfTextOp(l, margin, y, 10.5, [0,0,0]); y -= 15; });
+      lines2 = wrapPdfText(line2, contentW - infoPad*2, 11);
+    }
+    const lineH = 15;
+    const boxH = (lines1.length + lines2.length) * lineH + infoPad*2 + (hasLine2 ? 5 : 0);
+    const boxY = y - boxH;
+    ops += 'q 0.6 0.6 0.6 RG 1 w '+margin.toFixed(2)+' '+boxY.toFixed(2)+' '+contentW.toFixed(2)+' '+boxH.toFixed(2)+' re S Q\n';
+    let ty = y - infoPad - 9;
+    lines1.forEach(l=>{ ops += pdfTextOp(l, margin+infoPad, ty, 11, [0,0,0]); ty -= lineH; });
+    if(hasLine2){
+      ty -= 5;
+      lines2.forEach(l=>{ ops += pdfTextOp(l, margin+infoPad, ty, 11, [0.3,0.3,0.3]); ty -= lineH; });
     }
     return ops;
   });
@@ -1546,12 +1645,13 @@ function buildShowPDFBlob(entries, headerText){
   const kids = pages.map(p=>p.pageId+' 0 R').join(' ');
   beginObj(2); put('<< /Type /Pages /Kids ['+kids+'] /Count '+pages.length+' >>\n'); endObj();
   beginObj(3); put('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\n'); endObj();
+  beginObj(4); put('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\n'); endObj();
 
   pages.forEach((p,i)=>{
     const resXObj = [];
     if(p.img1Id) resXObj.push('/Im1 '+p.img1Id+' 0 R');
     if(p.img2Id) resXObj.push('/Im2 '+p.img2Id+' 0 R');
-    const resources = '<< /Font << /F1 3 0 R >>'+(resXObj.length? ' /XObject << '+resXObj.join(' ')+' >>':'')+' >>';
+    const resources = '<< /Font << /F1 3 0 R /F2 4 0 R >>'+(resXObj.length? ' /XObject << '+resXObj.join(' ')+' >>':'')+' >>';
 
     beginObj(p.pageId);
     put('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+pageW+' '+pageH+'] /Resources '+resources+' /Contents '+p.contentId+' 0 R >>\n');

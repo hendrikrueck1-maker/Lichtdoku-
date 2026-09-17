@@ -110,6 +110,8 @@
   .card-images.count-1 .img-wrap{width:min(100%, 58vh);}
   .card-images.count-2 .img-wrap{width:min(100%, 38vh);}
   .img-wrap img{width:100%;height:100%;object-fit:cover;display:block;}
+  .card-images.count-multi{display:grid;grid-template-columns:1fr 1fr;gap:2px;}
+  .card-images.count-multi .img-wrap{width:100%;}
   .img-del{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.65);color:#fff;border:none;
     border-radius:50%;width:32px;height:32px;font-size:15px;z-index:4;padding:0;line-height:1;}
   .card-footer{width:100%;border-collapse:collapse;font-size:12px;border-top:1px solid #e2e2e2;}
@@ -119,16 +121,21 @@
   .card-editrow button{flex:1;font-size:12.5px;padding:9px 6px;border-radius:10px;}
 
   /* Entry form */
-  .photo-btns{display:flex;gap:10px;}
-  .photo-slot{flex:1;text-align:center;}
-  .photo-slot .preview{width:100%;aspect-ratio:1/1;background:var(--card-dark);border:1px dashed var(--border);
-    border-radius:var(--radius);display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;
-    margin-bottom:6px;position:relative;}
-  .photo-slot .preview img{width:100%;height:100%;object-fit:cover;}
-  .photo-slot .preview .plus{font-size:34px;color:var(--muted);}
-  .photo-slot .preview .plus-hint{font-size:11px;color:var(--muted);margin-top:-4px;}
-  .photo-slot-btns{display:flex;flex-direction:column;gap:6px;}
-  .photo-slot-btns button{width:100%;font-size:13px;padding:9px;}
+  .photo-cat-cols{display:flex;flex-direction:column;gap:12px;}
+  @media(min-width:640px){ .photo-cat-cols{flex-direction:row;} }
+  .photo-cat{flex:1;border:2px solid var(--kat-aufbau);border-radius:var(--radius);padding:10px;}
+  .photo-cat.einleuchten{border-color:var(--kat-einleuchten);}
+  .photo-cat h4{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+    color:var(--kat-aufbau);font-weight:700;}
+  .photo-cat.einleuchten h4{color:var(--kat-einleuchten);}
+  .photo-cat-grid{display:flex;flex-wrap:wrap;gap:7px;}
+  .photo-thumb{position:relative;width:74px;height:74px;border-radius:9px;overflow:hidden;flex-shrink:0;}
+  .photo-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+  .photo-thumb .del{position:absolute;top:2px;right:2px;background:rgba(0,0,0,.7);color:#fff;
+    border:none;border-radius:50%;width:22px;height:22px;font-size:11px;padding:0;line-height:1;}
+  .photo-add-tile{width:74px;height:74px;border-radius:9px;border:1px dashed var(--border);
+    display:flex;align-items:center;justify-content:center;font-size:26px;color:var(--muted);
+    background:var(--card-dark);flex-shrink:0;}
   .cam-live-btn{background:transparent;border:1px dashed var(--border);color:var(--muted);
     font-size:12px !important;padding:6px !important;}
   .tag-row{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 2px;}
@@ -169,10 +176,10 @@
     color:#fff;border:none;font-size:32px;width:50px;height:64px;border-radius:10px;z-index:6;
     line-height:1;padding:0;}
   .lb-prev{left:8px;} .lb-next{right:8px;}
-  .lb-info{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.65);color:#fff;
-    padding:10px 16px calc(10px + env(safe-area-inset-bottom));font-size:13px;text-align:center;z-index:5;}
-  .lb-info b{color:#ffcf7d;}
-  .lb-info .lb-sub{opacity:.75;font-size:11px;margin-top:2px;}
+  .lb-info{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.72);color:#fff;
+    padding:14px 18px calc(14px + env(safe-area-inset-bottom));font-size:16px;text-align:center;z-index:5;}
+  .lb-info b{color:#ffcf7d;font-size:17px;}
+  .lb-info .lb-sub{opacity:.85;font-size:14px;margin-top:4px;}
 
   /* Live-Kamera mit 1:1-Vorschau */
   .camera-overlay{position:fixed;inset:0;background:#000;z-index:300;
@@ -190,8 +197,7 @@
 </head>
 <body>
 <div id="app"></div>
-<input type="file" id="fileInput1" accept="image/*" capture="environment" class="hidden">
-<input type="file" id="fileInput2" accept="image/*" capture="environment" class="hidden">
+<input type="file" id="fileInputDynamic" accept="image/*" capture="environment" class="hidden">
 <input type="file" id="jsonImportInput" accept="application/json" class="hidden">
 <div id="toast" class="toast"></div>
 
@@ -221,7 +227,7 @@
 
 <script>
 /* ===================== Version & Updates ===================== */
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 
 function registerServiceWorker(){
   if(!('serviceWorker' in navigator)) return;
@@ -357,11 +363,43 @@ async function initStorage(){
       }
     });
     storageCache = { shows, entries };
+    migrateEntriesToPhotoArrays();
   }catch(err){
     console.error('IndexedDB-Init fehlgeschlagen, Fallback auf localStorage', err);
     try{ storageCache.shows = JSON.parse(localStorage.getItem('ld_shows')||'[]'); }catch(e){}
   }
   storageReady = true;
+}
+
+/* Ab v1.6.0: Ein Eintrag hat keine einzelne "Kategorie" mehr, sondern zwei
+   Foto-Listen (bilderAufbau / bilderEinleuchten) – ein Kreis kann Fotos für
+   Aufbau UND Einleuchten gleichzeitig enthalten. Alte Einträge (kategorie +
+   bild1/bild2) werden beim Start einmalig automatisch umgewandelt. */
+function migrateEntryArray(arr){
+  let changed = false;
+  const migrated = (arr||[]).map(e=>{
+    if(e.bilderAufbau || e.bilderEinleuchten){ return e; } // bereits neues Format
+    changed = true;
+    const isAufbau = (e.kategorie === 'Aufbau');
+    const bilder = [e.bild1, e.bild2].filter(Boolean);
+    return {
+      id: e.id, kreis: e.kreis||'', filter: e.filter||'', adresse: e.adresse||'',
+      gruppe: e.gruppe||'', bemerkung: e.bemerkung||'',
+      bilderAufbau: isAufbau ? bilder : [],
+      bilderEinleuchten: isAufbau ? [] : bilder,
+      createdAt: e.createdAt||Date.now(), updatedAt: e.updatedAt||e.createdAt||Date.now()
+    };
+  });
+  return { migrated, changed };
+}
+function migrateEntriesToPhotoArrays(){
+  Object.keys(storageCache.entries).forEach(showId=>{
+    const {migrated, changed} = migrateEntryArray(storageCache.entries[showId]);
+    if(changed){
+      storageCache.entries[showId] = migrated;
+      idbPut('ld_entries_'+showId, migrated).catch(()=>{});
+    }
+  });
 }
 
 function loadShows(){ return storageCache.shows; }
@@ -410,6 +448,7 @@ let driveSync = {
   syncTimer: null,
   heartbeatTimer: null,
   lastSyncAt: null,
+  lastPullAt: null,
   authError: false
 };
 
@@ -440,6 +479,8 @@ async function initDriveSync(){
     }
   }
   window.addEventListener('online', ()=> driveHeartbeat());
+  window.addEventListener('focus', ()=> driveHeartbeat());
+  window.addEventListener('pageshow', ()=> driveHeartbeat());
   document.addEventListener('visibilitychange', ()=>{
     if(document.visibilityState === 'visible') driveHeartbeat();
   });
@@ -571,7 +612,6 @@ async function uploadShowToDrive(showId, token){
   const shows = loadShows();
   const show = shows.find(s=>s.id===showId);
   if(!show) return;
-  const entries = loadEntries(showId);
   token = token || await requestDriveToken(true);
   const folderId = await ensureDriveFolder();
   const fileName = showId + '.json';
@@ -581,6 +621,23 @@ async function uploadShowToDrive(showId, token){
     const searchRes = await fetch(DRIVE_API+'/files?q='+q+'&fields=files(id)', { headers:{ Authorization:'Bearer '+token } });
     const searchData = await searchRes.json();
     if(searchData.files && searchData.files.length) fileId = searchData.files[0].id;
+  }
+  let entries = loadEntries(showId);
+  /* Bevor wir schreiben: aktuellen Drive-Stand holen und mit dem lokalen Stand
+     zusammenführen (pro Eintrags-ID gewinnt der neuere "updatedAt"-Wert). So
+     überschreibt ein Gerät nicht die Änderungen eines anderen Geräts, das
+     zwischenzeitlich ebenfalls synchronisiert hat. */
+  if(fileId){
+    try{
+      const remoteRes = await fetch(DRIVE_API+'/files/'+fileId+'?alt=media', { headers:{ Authorization:'Bearer '+token } });
+      if(remoteRes.ok){
+        const remotePayload = await remoteRes.json();
+        if(remotePayload && Array.isArray(remotePayload.entries)){
+          entries = mergeEntryArrays(remotePayload.entries, entries);
+          saveEntries(showId, entries);
+        }
+      }
+    }catch(e){ /* falls das fehlschlägt, normal mit lokalem Stand weiterschreiben */ }
   }
   const metadata = fileId ? {} : { name:fileName, parents:[folderId] };
   const initUrl = fileId
@@ -605,6 +662,15 @@ async function uploadShowToDrive(showId, token){
     saveShows(shows2);
   }
 }
+function mergeEntryArrays(remoteEntries, localEntries){
+  const map = new Map();
+  (remoteEntries||[]).forEach(e=> map.set(e.id, e));
+  (localEntries||[]).forEach(e=>{
+    const ex = map.get(e.id);
+    if(!ex || (e.updatedAt||e.createdAt||0) >= (ex.updatedAt||ex.createdAt||0)) map.set(e.id, e);
+  });
+  return Array.from(map.values());
+}
 
 async function deleteDriveFile(fileId){
   try{
@@ -622,10 +688,10 @@ async function backupShowPDFToDrive(showId, token){
   const shows = loadShows();
   const show = shows.find(s=>s.id===showId);
   if(!show) return;
-  const entries = sortEntries(loadEntries(showId));
-  if(entries.length === 0) return;
+  const views = allViewsForShow(showId);
+  if(views.length === 0) return;
   let blob;
-  try{ blob = buildShowPDFBlob(entries, show.name); }catch(err){ return; }
+  try{ blob = buildShowPDFBlob(views, show.name); }catch(err){ return; }
   token = token || await requestDriveToken(true);
   const folderId = await ensureDriveFolder();
   const fileName = (show.name||'Lichtdoku').replace(/[^a-z0-9]+/gi,'_') + '_' + showId + '.pdf';
@@ -666,6 +732,7 @@ async function pullAllShows(){
     const data = await res.json();
     const files = data.files || [];
     for(const f of files){ await pullOneFile(f, token); }
+    driveSync.lastPullAt = Date.now();
     renderApp();
   }catch(err){ console.error('Drive-Abgleich fehlgeschlagen', err); driveSync.authError = true; renderApp(); }
 }
@@ -682,12 +749,13 @@ async function pullOneFile(f, token){
     if(!res.ok) return;
     const payload = await res.json();
     if(!payload.show || !payload.entries) return;
+    const {migrated} = migrateEntryArray(payload.entries);
     const shows2 = loadShows();
     const idx = shows2.findIndex(s=>s.id===showId);
     const mergedShow = Object.assign({}, payload.show, { id:showId, driveFileId:f.id, driveKnownModified:remoteTime });
     if(idx>=0) shows2[idx] = mergedShow; else shows2.push(mergedShow);
     saveShows(shows2);
-    saveEntries(showId, payload.entries);
+    saveEntries(showId, migrated);
   }catch(err){ console.error('Pull fehlgeschlagen für', showId, err); }
 }
 
@@ -725,6 +793,7 @@ function driveStatusText(){
   if(driveSync.syncing) return 'Synchronisiere…';
   if(driveSync.authError) return 'Anmeldung abgelaufen – bitte auf 🔑 tippen';
   if(driveSync.dirty.size>0) return navigator.onLine ? (driveSync.dirty.size+' Änderung(en) werden übertragen…') : (driveSync.dirty.size+' Änderung(en) warten auf Internetverbindung');
+  if(driveSync.lastPullAt) return 'Zuletzt geprüft: '+new Date(driveSync.lastPullAt).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
   if(driveSync.lastSyncAt) return 'Zuletzt synchronisiert: '+new Date(driveSync.lastSyncAt).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
   return 'Automatische Sicherung aktiv';
 }
@@ -732,11 +801,19 @@ function driveIconTap(){
   if(!driveSync.connected) connectDriveFlow();
   else syncNowManual();
 }
+let lastHomePullAttempt = 0;
+function maybeAutoPullOnHome(){
+  if(!driveSync.connected || !navigator.onLine) return;
+  const now = Date.now();
+  if(now - lastHomePullAttempt < 15000) return;
+  lastHomePullAttempt = now;
+  requestDriveToken(true).then(()=>{ driveSync.authError=false; pullAllShows(); }).catch(()=>{ driveSync.authError=true; renderApp(); });
+}
 
 /* ===================== State ===================== */
 let state = { view:'home', showId:null, showTab:'overview', editId:null, search:'',
   mode:'view', categoryFilter:'Alle', sortMode:'standard' };
-let tempImages = { bild1:null, bild2:null };
+let tempImages = { Aufbau:[], Einleuchten:[] };
 let formDraft = null;
 let cameraState = { stream:null, slot:null, facing:'environment' };
 /* Verhindert, dass "Speichern" gedrückt wird, während ein Foto noch im
@@ -830,8 +907,11 @@ function captureFromCamera(){
   const video = byId('cameraVideo');
   if(!video.videoWidth){ toast('Kamera lädt noch…'); return; }
   const dataUrl = cropToSquare(video, video.videoWidth, video.videoHeight, 1300, 0.8);
-  if(cameraState.slot === 1) tempImages.bild1 = dataUrl;
-  else if(cameraState.slot === 2) tempImages.bild2 = dataUrl;
+  const kat = cameraState.slot;
+  if(kat){
+    tempImages[kat] = tempImages[kat] || [];
+    tempImages[kat].push(dataUrl);
+  }
   closeCamera();
   renderApp();
 }
@@ -843,14 +923,18 @@ let lbPinchStartDist = 0, lbPinchStartScale = 1, lbPanStart = null, lbSwipeStart
 let currentGallery = [];
 let currentGalleryIndex = 0;
 
-/* Baut die Bilder-Galerie aus genau den Einträgen, die aktuell in der
-   Übersicht sichtbar sind (gleicher Filter/Suche/Sortierung) – so führt
-   "weiter/zurück" durch exakt das, was man gerade sieht. */
+/* Baut die sichtbare Liste aus "Views" (Eintrag + Kategorie) auf Basis von
+   Filter/Suche/Sortierung. Ein Eintrag mit Fotos in BEIDEN Kategorien
+   erscheint als zwei Views (siehe entryCategoryTags). */
+function entryCategoryTags(e){
+  const tags = [];
+  if((e.bilderAufbau||[]).length) tags.push('Aufbau');
+  if((e.bilderEinleuchten||[]).length) tags.push('Einleuchten');
+  if(tags.length === 0) tags.push('Leer');
+  return tags;
+}
 function getVisibleEntries(show){
   let entries = loadEntries(show.id);
-  if(state.categoryFilter && state.categoryFilter !== 'Alle'){
-    entries = entries.filter(e => (e.kategorie || 'Einleuchten') === state.categoryFilter);
-  }
   const q = state.search.trim().toLowerCase();
   if(q){
     entries = entries.filter(e =>
@@ -861,29 +945,51 @@ function getVisibleEntries(show){
       (e.gruppe||'').toLowerCase().includes(q)
     );
   }
-  return sortEntries(entries);
+  let views = [];
+  entries.forEach(e=>{
+    entryCategoryTags(e).forEach(kat=>{
+      if(kat === 'Leer'){
+        if(!state.categoryFilter || state.categoryFilter === 'Alle') views.push({entry:e, kat});
+        return;
+      }
+      if(state.categoryFilter && state.categoryFilter !== 'Alle' && kat !== state.categoryFilter) return;
+      views.push({entry:e, kat});
+    });
+  });
+  return sortViews(views);
 }
 function getGalleryForShow(show){
-  const entries = getVisibleEntries(show);
+  const views = getVisibleEntries(show);
   let gallery = [];
-  entries.forEach(e=>{
-    const total = (e.bild1?1:0) + (e.bild2?1:0);
-    let n = 0;
-    if(e.bild1){ n++; gallery.push({src:e.bild1, entryId:e.id, slot:1, n:n, total:total,
-      kreis:e.kreis, filter:e.filter, adresse:e.adresse, bemerkung:e.bemerkung}); }
-    if(e.bild2){ n++; gallery.push({src:e.bild2, entryId:e.id, slot:2, n:n, total:total,
-      kreis:e.kreis, filter:e.filter, adresse:e.adresse, bemerkung:e.bemerkung}); }
+  views.forEach(v=>{
+    const e = v.entry, kat = v.kat;
+    const bilder = kat === 'Leer' ? [] : (e['bilder'+kat] || []);
+    const total = bilder.length;
+    bilder.forEach((src, i)=>{
+      gallery.push({src, entryId:e.id, kat, idx:i, n:i+1, total:total,
+        kreis:e.kreis, filter:e.filter, adresse:e.adresse, bemerkung:e.bemerkung});
+    });
   });
   return gallery;
 }
-function openGalleryLightbox(entryId, slot){
+function openGalleryLightbox(entryId, kat, idx){
   const show = loadShows().find(s=>s.id===state.showId);
   if(!show) return;
   const gallery = getGalleryForShow(show);
-  const idx = gallery.findIndex(g=>g.entryId===entryId && g.slot===slot);
-  if(idx < 0) return;
+  const gidx = gallery.findIndex(g=>g.entryId===entryId && g.kat===kat && g.idx===idx);
+  if(gidx < 0) return;
   currentGallery = gallery;
-  showGalleryAt(idx);
+  showGalleryAt(gidx);
+}
+/* Wie getVisibleEntries, aber ohne aktuellen Filter/Suche – für den
+   automatischen PDF-Hintergrund-Export (immer die komplette Show). */
+function allViewsForShow(showId){
+  const entries = loadEntries(showId);
+  let views = [];
+  entries.forEach(e=>{
+    entryCategoryTags(e).forEach(kat=>{ views.push({entry:e, kat}); });
+  });
+  return sortViews(views);
 }
 function showGalleryAt(idx){
   if(idx < 0 || idx >= currentGallery.length) return;
@@ -977,7 +1083,9 @@ function initLightbox(){
     if(wasSingle && lb.scale <= 1 && lbSwipeStart){
       const dx = e.clientX - lbSwipeStart.x;
       const dy = e.clientY - lbSwipeStart.y;
-      if(Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5){
+      if(Math.abs(dy) > 70 && Math.abs(dy) > Math.abs(dx) * 1.3){
+        closeLightbox();
+      } else if(Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5){
         lbNav(dx < 0 ? 1 : -1);
       }
     }
@@ -994,41 +1102,39 @@ function initLightbox(){
   img.addEventListener('pointercancel', onPointerCancel);
 }
 
-function deleteTempImage(slot){
+function deleteTempPhoto(kat, idx){
   if(!confirm('Foto wirklich löschen?')) return;
-  if(slot === 1) tempImages.bild1 = null; else tempImages.bild2 = null;
+  (tempImages[kat]||[]).splice(idx,1);
   renderApp();
 }
-function deleteEntryImage(entryId, slot){
+function deleteEntryImage(entryId, kat, idx){
   if(!confirm('Dieses Bild wirklich löschen?')) return;
   let entries = loadEntries(state.showId);
-  const idx = entries.findIndex(e=>e.id===entryId);
-  if(idx < 0) return;
-  if(slot === 1) entries[idx].bild1 = null; else entries[idx].bild2 = null;
-  entries[idx].updatedAt = Date.now();
+  const e = entries.find(x=>x.id===entryId);
+  if(!e) return;
+  const arr = e['bilder'+kat] || [];
+  arr.splice(idx,1);
+  e['bilder'+kat] = arr;
+  e.updatedAt = Date.now();
   saveEntries(state.showId, entries);
   markShowDirty(state.showId);
   renderApp();
 }
 
 /* ===================== Datei-Inputs ===================== */
-byId('fileInput1').addEventListener('change', async (e)=>{
+let pendingPhotoKat = 'Aufbau';
+function triggerAddPhoto(kat){ pendingPhotoKat = kat; byId('fileInputDynamic').click(); }
+byId('fileInputDynamic').addEventListener('change', async (e)=>{
   const f = e.target.files[0]; if(!f) return;
-  compressingSlots.add(1);
-  toast('Bild 1 wird komprimiert…');
+  const kat = pendingPhotoKat;
+  const token = kat+'_'+Date.now();
+  compressingSlots.add(token);
+  toast('Foto wird komprimiert…');
   renderApp();
-  tempImages.bild1 = await compressImage(f);
-  compressingSlots.delete(1);
-  e.target.value = '';
-  renderApp();
-});
-byId('fileInput2').addEventListener('change', async (e)=>{
-  const f = e.target.files[0]; if(!f) return;
-  compressingSlots.add(2);
-  toast('Bild 2 wird komprimiert…');
-  renderApp();
-  tempImages.bild2 = await compressImage(f);
-  compressingSlots.delete(2);
+  const dataUrl = await compressImage(f);
+  tempImages[kat] = tempImages[kat] || [];
+  tempImages[kat].push(dataUrl);
+  compressingSlots.delete(token);
   e.target.value = '';
   renderApp();
 });
@@ -1043,7 +1149,8 @@ byId('jsonImportInput').addEventListener('change', (e)=>{
         data.show.id = 's_'+Date.now();
         shows.push(data.show);
         saveShows(shows);
-        saveEntries(data.show.id, data.entries);
+        const {migrated} = migrateEntryArray(data.entries);
+        saveEntries(data.show.id, migrated);
         markShowDirty(data.show.id);
         toast('Veranstaltung importiert');
         state.view='home'; renderApp();
@@ -1061,26 +1168,26 @@ function escapeHtml(str){
 function esc(s){ return escapeHtml(s).replace(/\n/g,'<br>'); }
 
 /* ===================== Kartenvorlage ===================== */
-function cardTemplate(entry, opts){
+function cardTemplate(entry, kat, opts){
   opts = opts || {};
   const editable = !!opts.editable;
-  const kategorie = entry.kategorie || 'Einleuchten';
-  const katClass = kategorie === 'Aufbau' ? 'kat-aufbau' : 'kat-einleuchten';
+  const isLeer = kat === 'Leer';
+  const katClass = kat === 'Aufbau' ? 'kat-aufbau' : (kat === 'Einleuchten' ? 'kat-einleuchten' : '');
+  const bilder = isLeer ? [] : (entry['bilder'+kat] || []);
   let html = '<div class="card '+katClass+'" data-id="'+entry.id+'">';
-  html += '<div class="cat-badge '+katClass+'">'+escapeHtml(kategorie)+'</div>';
-  const imgCount = (entry.bild1?1:0) + (entry.bild2?1:0);
-  html += '<div class="card-images count-'+(imgCount||1)+'">';
-  if(entry.bild1){
-    html += '<div class="img-wrap"><img src="'+entry.bild1+'" loading="lazy" onclick="openGalleryLightbox(\''+entry.id+'\',1)">';
-    if(editable){ html += '<button class="img-del" onclick="event.stopPropagation();deleteEntryImage(\''+entry.id+'\',1)">🗑</button>'; }
-    html += '</div>';
+  html += '<div class="cat-badge '+katClass+'">'+(isLeer ? 'Ohne Foto' : kat)+'</div>';
+  const imgCount = bilder.length;
+  const gridClass = imgCount === 1 ? 'count-1' : (imgCount === 2 ? 'count-2' : (imgCount >= 3 ? 'count-multi' : 'count-1'));
+  html += '<div class="card-images '+gridClass+'">';
+  if(imgCount === 0){
+    html += '<div class="img-wrap"><span style="color:#999;font-size:12px;">Kein Bild</span></div>';
+  } else {
+    bilder.forEach((src, i)=>{
+      html += '<div class="img-wrap"><img src="'+src+'" loading="lazy" onclick="openGalleryLightbox(\''+entry.id+'\',\''+kat+'\','+i+')">';
+      if(editable){ html += '<button class="img-del" onclick="event.stopPropagation();deleteEntryImage(\''+entry.id+'\',\''+kat+'\','+i+')">🗑</button>'; }
+      html += '</div>';
+    });
   }
-  if(entry.bild2){
-    html += '<div class="img-wrap"><img src="'+entry.bild2+'" loading="lazy" onclick="openGalleryLightbox(\''+entry.id+'\',2)">';
-    if(editable){ html += '<button class="img-del" onclick="event.stopPropagation();deleteEntryImage(\''+entry.id+'\',2)">🗑</button>'; }
-    html += '</div>';
-  }
-  if(!entry.bild1 && !entry.bild2){ html += '<div class="img-wrap"><span style="color:#999;font-size:12px;">Kein Bild</span></div>'; }
   html += '</div>';
   html += '<table class="card-footer"><tr>';
   html += '<td><b>Kreis</b>'+escapeHtml(entry.kreis||'–')+'</td>';
@@ -1112,6 +1219,7 @@ function renderApp(){
 /* ---- Home ---- */
 function renderHome(){
   const shows = loadShows().sort((a,b)=> (b.createdAt||0) - (a.createdAt||0));
+  maybeAutoPullOnHome();
   let html = '';
   html += '<div class="topbar"><h1>🎭 Lichtdoku</h1>';
   html += '<button class="iconbtn" onclick="driveIconTap()" title="'+driveSyncTitle()+'">'+driveSyncIcon()+'</button>';
@@ -1239,31 +1347,31 @@ function kreisSortValue(k){
   const m = (k||'').match(/\d+/);
   return m ? parseInt(m[0], 10) : -1;
 }
-function kategorieRank(e){ return (e.kategorie||'Einleuchten') === 'Aufbau' ? 0 : 1; }
-function sortEntries(entries){
+function kategorieRank(kat){ return kat === 'Aufbau' ? 0 : (kat === 'Einleuchten' ? 1 : 2); }
+function sortViews(views){
   const mode = state.sortMode || 'standard';
   if(mode === 'standard'){
     // Grundsätzlich: erst alle Aufbau-Kreise, dann alle Einleuchten-Kreise,
     // innerhalb jeder Gruppe Kreisnummer klein → groß.
-    return entries.slice().sort((a,b)=>
-      kategorieRank(a) - kategorieRank(b) ||
-      kreisSortValue(a.kreis) - kreisSortValue(b.kreis) ||
-      (a.createdAt - b.createdAt)
+    return views.slice().sort((a,b)=>
+      kategorieRank(a.kat) - kategorieRank(b.kat) ||
+      kreisSortValue(a.entry.kreis) - kreisSortValue(b.entry.kreis) ||
+      (a.entry.createdAt - b.entry.createdAt)
     );
   }
   if(mode === 'kreis-asc'){
-    return entries.slice().sort((a,b)=> kreisSortValue(a.kreis)-kreisSortValue(b.kreis) || (a.createdAt-b.createdAt));
+    return views.slice().sort((a,b)=> kreisSortValue(a.entry.kreis)-kreisSortValue(b.entry.kreis) || (a.entry.createdAt-b.entry.createdAt));
   }
   if(mode === 'kreis-desc'){
-    return entries.slice().sort((a,b)=> kreisSortValue(b.kreis)-kreisSortValue(a.kreis) || (a.createdAt-b.createdAt));
+    return views.slice().sort((a,b)=> kreisSortValue(b.entry.kreis)-kreisSortValue(a.entry.kreis) || (a.entry.createdAt-b.entry.createdAt));
   }
-  return entries.slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+  return views.slice().sort((a,b)=>(a.entry.createdAt||0)-(b.entry.createdAt||0));
 }
 
 const CATEGORIES = ['Alle','Aufbau','Einleuchten'];
 
 function renderOverviewBody(show){
-  const entries = getVisibleEntries(show);
+  const views = getVisibleEntries(show);
   const editable = state.mode === 'edit';
   const q = state.search.trim();
 
@@ -1286,19 +1394,21 @@ function renderOverviewBody(show){
   html += '<option value="eingabe" '+(state.sortMode==='eingabe'?'selected':'')+'>Eingabe-Reihenfolge</option>';
   html += '</select></div>';
   html += '<div class="search-box"><input type="text" placeholder="Suche nach Kreis, Filter, Adresse, Bemerkung…" value="'+escapeHtml(state.search)+'" oninput="onSearch(this.value)"></div>';
-  if(entries.length === 0){
+  if(views.length === 0){
     html += '<div class="empty-hint">Keine Einträge'+(q?' gefunden':'')+'.<br>'+(q?'':'Lege unter „Neuer Kreis“ den ersten Eintrag an.')+'</div>';
   } else {
     const showSections = (state.categoryFilter === 'Alle' && state.sortMode === 'standard');
     let lastKat = null;
     html += '<div class="grid">';
-    entries.forEach(e=>{
-      const kat = e.kategorie || 'Einleuchten';
+    views.forEach(v=>{
+      const kat = v.kat;
       if(showSections && kat !== lastKat){
-        html += '<div class="section-head kat-'+(kat==='Aufbau'?'aufbau':'einleuchten')+'">'+escapeHtml(kat)+'</div>';
+        const label = kat === 'Leer' ? 'Ohne Foto' : kat;
+        const cls = kat==='Aufbau' ? 'kat-aufbau' : (kat==='Einleuchten' ? 'kat-einleuchten' : '');
+        html += '<div class="section-head '+cls+'">'+escapeHtml(label)+'</div>';
         lastKat = kat;
       }
-      html += cardTemplate(e, {editable:editable});
+      html += cardTemplate(v.entry, kat, {editable:editable});
     });
     html += '</div>';
   }
@@ -1313,11 +1423,8 @@ function focusSearch(){
 /* ---- Entry-Formular ---- */
 function newEntry(){
   state.editId = null;
-  tempImages = { bild1:null, bild2:null };
-  formDraft = {
-    kategorie: state.categoryFilter === 'Aufbau' ? 'Aufbau' : 'Einleuchten',
-    kreis:'', filter:'', adresse:'', gruppe:'', bemerkung:''
-  };
+  tempImages = { Aufbau:[], Einleuchten:[] };
+  formDraft = { kreis:'', filter:'', adresse:'', gruppe:'', bemerkung:'' };
   state.showTab = 'form';
   renderApp();
 }
@@ -1326,9 +1433,8 @@ function editEntry(id){
   const e = entries.find(x=>x.id===id);
   if(!e) return;
   state.editId = id;
-  tempImages = { bild1: e.bild1 || null, bild2: e.bild2 || null };
+  tempImages = { Aufbau:(e.bilderAufbau||[]).slice(), Einleuchten:(e.bilderEinleuchten||[]).slice() };
   formDraft = {
-    kategorie: e.kategorie || 'Einleuchten',
     kreis: e.kreis || '', filter: e.filter || '', adresse: e.adresse || '',
     gruppe: e.gruppe || '', bemerkung: e.bemerkung || ''
   };
@@ -1346,46 +1452,35 @@ function deleteEntry(id){
 
 const QUICK_FILTERS = ['501','R119','201','202','119','132','nc'];
 
+function photoCatSection(kat){
+  const label = kat;
+  const colorCls = kat === 'Aufbau' ? 'aufbau' : 'einleuchten';
+  const arr = tempImages[kat] || [];
+  let html = '<div class="photo-cat '+colorCls+'">';
+  html += '<h4>'+label+'</h4>';
+  html += '<div class="photo-cat-grid">';
+  arr.forEach((src, i)=>{
+    html += '<div class="photo-thumb"><img src="'+src+'" onclick="openLightboxSingle(this.src)">';
+    html += '<button class="del" onclick="event.stopPropagation();deleteTempPhoto(\''+kat+'\','+i+')">🗑</button></div>';
+  });
+  html += '<div class="photo-add-tile" onclick="triggerAddPhoto(\''+kat+'\')">＋</div>';
+  html += '</div>';
+  html += '<button type="button" class="cam-live-btn" style="margin-top:8px;width:100%;" onclick="openCamera(\''+kat+'\')">🎥 Live 1:1</button>';
+  html += '</div>';
+  return html;
+}
+
 function renderFormBody(show){
   if(!formDraft){
-    formDraft = { kategorie:'Einleuchten', kreis:'', filter:'', adresse:'', gruppe:'', bemerkung:'' };
+    formDraft = { kreis:'', filter:'', adresse:'', gruppe:'', bemerkung:'' };
   }
   const d = formDraft;
 
   let html = '<div>';
-  html += '<label>Kategorie</label>';
-  html += '<div class="tag-row" id="kategorieRow">';
-  ['Aufbau','Einleuchten'].forEach(k=>{
-    const katCls = k === 'Aufbau' ? 'kat-aufbau' : 'kat-einleuchten';
-    html += '<button type="button" class="tag cat-choice '+katCls+' '+(k===d.kategorie?'active':'')+'" onclick="selectKategorie(\''+k+'\')">'+k+'</button>';
-  });
-  html += '</div>';
-
-  html += '<label>Fotos</label>';
-  html += '<div class="photo-btns">';
-
-  html += '<div class="photo-slot">';
-  html += '<div class="preview" id="prev1"'+(tempImages.bild1?'':' onclick="document.getElementById(\'fileInput1\').click()"')+'>';
-  if(tempImages.bild1){
-    html += '<img src="'+tempImages.bild1+'" onclick="openLightboxSingle(this.src)">';
-    html += '<button class="img-del" onclick="event.stopPropagation();deleteTempImage(1)">🗑</button>';
-  } else { html += '<span class="plus">＋</span><div class="plus-hint">Foto</div>'; }
-  html += '</div>';
-  html += '<div class="photo-slot-btns">';
-  html += '<button class="cam-live-btn" onclick="openCamera(1)">🎥 Live 1:1</button>';
-  html += '</div></div>';
-
-  html += '<div class="photo-slot">';
-  html += '<div class="preview" id="prev2"'+(tempImages.bild2?'':' onclick="document.getElementById(\'fileInput2\').click()"')+'>';
-  if(tempImages.bild2){
-    html += '<img src="'+tempImages.bild2+'" onclick="openLightboxSingle(this.src)">';
-    html += '<button class="img-del" onclick="event.stopPropagation();deleteTempImage(2)">🗑</button>';
-  } else { html += '<span class="plus">＋</span><div class="plus-hint">Foto</div>'; }
-  html += '</div>';
-  html += '<div class="photo-slot-btns">';
-  html += '<button class="cam-live-btn" onclick="openCamera(2)">🎥 Live 1:1</button>';
-  html += '</div></div>';
-
+  html += '<label>Fotos – Aufbau (blau) &amp; Einleuchten (gelb)</label>';
+  html += '<div class="photo-cat-cols">';
+  html += photoCatSection('Aufbau');
+  html += photoCatSection('Einleuchten');
   html += '</div>';
 
   html += '<label>Kreis (optional)</label>';
@@ -1421,13 +1516,6 @@ function updateDraft(field, value){
   if(formDraft) formDraft[field] = value;
 }
 
-function selectKategorie(k){
-  if(formDraft) formDraft.kategorie = k;
-  document.querySelectorAll('#kategorieRow .cat-choice').forEach(b=>{
-    b.classList.toggle('active', b.textContent.trim() === k);
-  });
-}
-
 function addFilterTag(tag){
   const input = byId('f_filter');
   if(!input) return;
@@ -1438,7 +1526,7 @@ function addFilterTag(tag){
 }
 
 function cancelForm(){
-  tempImages = { bild1:null, bild2:null };
+  tempImages = { Aufbau:[], Einleuchten:[] };
   formDraft = null;
   state.editId = null;
   state.showTab = 'overview';
@@ -1448,32 +1536,62 @@ function cancelForm(){
 function saveEntry(){
   if(compressingSlots.size > 0){ toast('⏳ Bitte kurz warten – Foto wird noch verarbeitet…'); return; }
   if(!formDraft) formDraft = {};
-  let entries = loadEntries(state.showId);
   const now = Date.now();
-  const data = {
-    id: state.editId || ('e_'+now),
-    kategorie: formDraft.kategorie || 'Einleuchten',
-    kreis: (formDraft.kreis||'').trim(),
-    filter: (formDraft.filter||'').trim(),
-    adresse: (formDraft.adresse||'').trim(),
-    gruppe: (formDraft.gruppe||'').trim(),
-    bemerkung: (formDraft.bemerkung||'').trim(),
-    bild1: tempImages.bild1,
-    bild2: tempImages.bild2,
-    createdAt: now,
-    updatedAt: now
-  };
+  const kreisVal = (formDraft.kreis||'').trim();
+  let entries = loadEntries(state.showId);
+
   if(state.editId){
     const idx = entries.findIndex(e=>e.id===state.editId);
-    if(idx >= 0){ data.createdAt = entries[idx].createdAt || now; entries[idx] = data; }
-    else entries.push(data);
+    if(idx >= 0){
+      const data = entries[idx];
+      data.kreis = kreisVal;
+      data.filter = (formDraft.filter||'').trim();
+      data.adresse = (formDraft.adresse||'').trim();
+      data.gruppe = (formDraft.gruppe||'').trim();
+      data.bemerkung = (formDraft.bemerkung||'').trim();
+      data.bilderAufbau = (tempImages.Aufbau||[]).slice();
+      data.bilderEinleuchten = (tempImages.Einleuchten||[]).slice();
+      data.updatedAt = now;
+      entries[idx] = data;
+    }
   } else {
-    entries.push(data);
+    /* Gleiche Kreis-Nummer wie ein bereits vorhandener Eintrag? Dann
+       zusammenführen statt doppelt anzulegen: neue Fotos werden ergänzt,
+       Filter/Adresse/Gruppe/Bemerkung vom bestehenden Eintrag übernommen,
+       sofern im Formular nichts Neues eingetragen wurde. */
+    let mergeIdx = -1;
+    if(kreisVal){
+      mergeIdx = entries.findIndex(e => (e.kreis||'').trim().toLowerCase() === kreisVal.toLowerCase());
+    }
+    if(mergeIdx >= 0){
+      const ex = entries[mergeIdx];
+      ex.filter = (formDraft.filter||'').trim() || ex.filter || '';
+      ex.adresse = (formDraft.adresse||'').trim() || ex.adresse || '';
+      ex.gruppe = (formDraft.gruppe||'').trim() || ex.gruppe || '';
+      ex.bemerkung = (formDraft.bemerkung||'').trim() || ex.bemerkung || '';
+      ex.bilderAufbau = (ex.bilderAufbau||[]).concat(tempImages.Aufbau||[]);
+      ex.bilderEinleuchten = (ex.bilderEinleuchten||[]).concat(tempImages.Einleuchten||[]);
+      ex.updatedAt = now;
+      entries[mergeIdx] = ex;
+      toast('Mit bestehendem Kreis "'+kreisVal+'" zusammengeführt');
+    } else {
+      entries.push({
+        id: 'e_'+now,
+        kreis: kreisVal,
+        filter: (formDraft.filter||'').trim(),
+        adresse: (formDraft.adresse||'').trim(),
+        gruppe: (formDraft.gruppe||'').trim(),
+        bemerkung: (formDraft.bemerkung||'').trim(),
+        bilderAufbau: (tempImages.Aufbau||[]).slice(),
+        bilderEinleuchten: (tempImages.Einleuchten||[]).slice(),
+        createdAt: now, updatedAt: now
+      });
+    }
   }
   const ok = saveEntries(state.showId, entries);
   if(!ok){ return; } // Fehlermeldung kam bereits aus saveEntries(); Formular bleibt offen, nichts geht verloren
   markShowDirty(state.showId);
-  tempImages = { bild1:null, bild2:null };
+  tempImages = { Aufbau:[], Einleuchten:[] };
   formDraft = null;
   state.editId = null;
   state.showTab = 'overview';
@@ -1550,27 +1668,79 @@ function pdfTextOp(str, x, y, size, color, maxWidth, align, font){
   const f = font || '/F1';
   return 'BT '+c[0]+' '+c[1]+' '+c[2]+' rg '+f+' '+size+' Tf '+x.toFixed(2)+' '+y.toFixed(2)+' Td ('+pdfEscape(str)+') Tj ET\n';
 }
-const KAT_COLOR = { 'Aufbau':[0.055,0.647,0.914], 'Einleuchten':[0.961,0.647,0.141] };
+const KAT_COLOR = { 'Aufbau':[0.055,0.647,0.914], 'Einleuchten':[0.961,0.647,0.141], 'Leer':[0.55,0.55,0.55] };
 
-function buildShowPDFBlob(entries, headerText){
+/* Positioniert 1–4 Bilder als Quadrat (1), Stapel (2) oder 2x2-Raster (3–4)
+   innerhalb der verfügbaren Breite/Höhe. Gibt die erzeugten PDF-Ops und die
+   tatsächlich verbrauchte Höhe zurück. */
+function layoutImageGrid(imgObjs, x0, yTop, maxW){
+  const n = imgObjs.length;
+  if(n === 0) return { ops:'', height:0 };
+  let ops = '';
+  if(n === 1){
+    const sz = Math.max(140, Math.min(maxW, 440));
+    const x = x0 + (maxW - sz)/2;
+    const imgY = yTop - sz;
+    ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im0 Do Q\n';
+    return { ops, height: sz };
+  }
+  if(n === 2){
+    const sz = Math.min(maxW, 280);
+    const gap = 12;
+    const x = x0 + (maxW - sz)/2;
+    let imgY = yTop - sz;
+    ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im0 Do Q\n';
+    imgY -= (sz + gap);
+    ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im1 Do Q\n';
+    return { ops, height: sz*2 + gap };
+  }
+  // 3 oder 4 Fotos: 2x2-Raster (bei 3 bleibt das letzte Feld leer)
+  const gap = 10;
+  const sz = Math.min((maxW - gap)/2, 210);
+  const gridW = sz*2 + gap;
+  const gx0 = x0 + (maxW - gridW)/2;
+  const positions = [[0,0],[1,0],[0,1],[1,1]];
+  imgObjs.forEach((_,i)=>{
+    const pos = positions[i];
+    const x = gx0 + pos[0]*(sz+gap);
+    const imgY = yTop - sz - pos[1]*(sz+gap);
+    ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im'+i+' Do Q\n';
+  });
+  return { ops, height: sz*2 + gap };
+}
+
+function buildShowPDFBlob(views, headerText){
   const pageW = 595.28, pageH = 841.89; // A4 in pt
   const margin = 22.68; // ~8mm
   const contentW = pageW - margin*2;
   const barH = 16; // farbiger Kategorie-Balken oben/unten
+  const IMAGES_PER_PAGE = 4;
+
+  // Views mit mehr als 4 Fotos auf mehrere Seiten aufteilen (Fortsetzung)
+  let logicalPages = [];
+  views.forEach(v=>{
+    const kat = v.kat;
+    const images = kat === 'Leer' ? [] : (v.entry['bilder'+kat] || []);
+    const chunks = [];
+    if(images.length === 0){ chunks.push([]); }
+    else { for(let i=0;i<images.length;i+=IMAGES_PER_PAGE){ chunks.push(images.slice(i, i+IMAGES_PER_PAGE)); } }
+    chunks.forEach((imgs, ci)=>{ logicalPages.push({ entry:v.entry, kat, images:imgs, isContinuation: ci>0 }); });
+  });
 
   let nextId = 5; // 1=Catalog, 2=Pages, 3=Font Helvetica, 4=Font Helvetica-Bold
-  const pages = entries.map(e=>{
+  const pages = logicalPages.map(lp=>{
     const pageId = nextId++, contentId = nextId++;
-    let img1Id=null, img2Id=null, img1Bytes=null, img2Bytes=null, img1Dim=null, img2Dim=null;
-    if(e.bild1){ img1Bytes = dataUrlToBytes(e.bild1); img1Dim = getJpegDimensions(img1Bytes); img1Id = nextId++; }
-    if(e.bild2){ img2Bytes = dataUrlToBytes(e.bild2); img2Dim = getJpegDimensions(img2Bytes); img2Id = nextId++; }
-    return { entry:e, pageId, contentId, img1Id, img2Id, img1Bytes, img2Bytes, img1Dim, img2Dim };
+    const imgObjs = lp.images.map(src=>{
+      const bytes = dataUrlToBytes(src);
+      const dim = getJpegDimensions(bytes);
+      return { id: nextId++, bytes, dim };
+    });
+    return { lp, pageId, contentId, imgObjs };
   });
 
   const pageContents = pages.map(p=>{
-    const e = p.entry;
-    const kategorie = e.kategorie || 'Einleuchten';
-    const katColor = KAT_COLOR[kategorie] || KAT_COLOR['Einleuchten'];
+    const e = p.lp.entry, kat = p.lp.kat;
+    const katColor = KAT_COLOR[kat] || KAT_COLOR['Einleuchten'];
     let ops = '';
 
     // Farbiger Kategorie-Balken über die volle Seitenbreite, oben UND unten
@@ -1583,28 +1753,14 @@ function buildShowPDFBlob(entries, headerText){
       ops += pdfTextOp(headerText, margin, y-13, 13, [0.15,0.15,0.15], contentW, 'center', '/F2');
       y -= 13*1.8;
     }
-    const badgeW = 84, badgeH = 17;
+    const katLabel = (kat === 'Leer' ? 'Ohne Foto' : kat) + (p.lp.isContinuation ? ' (Forts.)' : '');
+    const badgeW = Math.max(84, katLabel.length*6.2), badgeH = 17;
     ops += 'q '+katColor[0]+' '+katColor[1]+' '+katColor[2]+' rg '+margin.toFixed(2)+' '+(y-badgeH).toFixed(2)+' '+badgeW+' '+badgeH+' re f Q\n';
-    ops += pdfTextOp(kategorie, margin+8, y-badgeH+5.5, 9, [1,1,1], null, null, '/F2');
+    ops += pdfTextOp(katLabel, margin+8, y-badgeH+5.5, 9, [1,1,1], null, null, '/F2');
     y -= badgeH + 14;
 
-    const imgCount = (p.img1Id?1:0) + (p.img2Id?1:0);
-    if(imgCount === 1){
-      const sz = Math.max(140, Math.min(contentW, y - margin - barH - 120, 450));
-      const x = margin + (contentW - sz)/2;
-      const imgY = y - sz;
-      ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im1 Do Q\n';
-      y = imgY - 16;
-    } else if(imgCount === 2){
-      const sz = Math.min(contentW, 290);
-      const gap = 12;
-      const x = margin + (contentW - sz)/2;
-      let imgY = y - sz;
-      ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im1 Do Q\n';
-      imgY -= (sz + gap);
-      ops += 'q '+sz.toFixed(2)+' 0 0 '+sz.toFixed(2)+' '+x.toFixed(2)+' '+imgY.toFixed(2)+' cm /Im2 Do Q\n';
-      y = imgY - 16;
-    }
+    const grid = layoutImageGrid(p.imgObjs, margin, y, contentW);
+    if(grid.height > 0){ ops += grid.ops; y -= grid.height + 16; }
 
     // Gerahmter Info-Block für bessere Sichtbarkeit von Kreis/Filter/Adresse/Bemerkung
     const infoPad = 10;
@@ -1648,9 +1804,7 @@ function buildShowPDFBlob(entries, headerText){
   beginObj(4); put('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\n'); endObj();
 
   pages.forEach((p,i)=>{
-    const resXObj = [];
-    if(p.img1Id) resXObj.push('/Im1 '+p.img1Id+' 0 R');
-    if(p.img2Id) resXObj.push('/Im2 '+p.img2Id+' 0 R');
+    const resXObj = p.imgObjs.map((img,ii)=> '/Im'+ii+' '+img.id+' 0 R');
     const resources = '<< /Font << /F1 3 0 R /F2 4 0 R >>'+(resXObj.length? ' /XObject << '+resXObj.join(' ')+' >>':'')+' >>';
 
     beginObj(p.pageId);
@@ -1664,20 +1818,13 @@ function buildShowPDFBlob(entries, headerText){
     put('\nendstream\n');
     endObj();
 
-    if(p.img1Id){
-      beginObj(p.img1Id);
-      put('<< /Type /XObject /Subtype /Image /Width '+p.img1Dim.width+' /Height '+p.img1Dim.height+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+p.img1Bytes.length+' >>\nstream\n');
-      put(p.img1Bytes);
+    p.imgObjs.forEach(img=>{
+      beginObj(img.id);
+      put('<< /Type /XObject /Subtype /Image /Width '+img.dim.width+' /Height '+img.dim.height+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+img.bytes.length+' >>\nstream\n');
+      put(img.bytes);
       put('\nendstream\n');
       endObj();
-    }
-    if(p.img2Id){
-      beginObj(p.img2Id);
-      put('<< /Type /XObject /Subtype /Image /Width '+p.img2Dim.width+' /Height '+p.img2Dim.height+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+p.img2Bytes.length+' >>\nstream\n');
-      put(p.img2Bytes);
-      put('\nendstream\n');
-      endObj();
-    }
+    });
   });
 
   const xrefStart = offset;
@@ -1761,8 +1908,8 @@ async function shareEntry(id){
   if(!e) return;
   const text = 'Kreis: '+(e.kreis||'-')+'\nFilter: '+(e.filter||'-')+'\nBemerkung: '+(e.bemerkung||'-');
   const files = [];
-  if(e.bild1) files.push(dataURLtoFile(e.bild1, 'kreis_'+(e.kreis||'x')+'_1.jpg'));
-  if(e.bild2) files.push(dataURLtoFile(e.bild2, 'kreis_'+(e.kreis||'x')+'_2.jpg'));
+  (e.bilderAufbau||[]).forEach((src,i)=> files.push(dataURLtoFile(src, 'kreis_'+(e.kreis||'x')+'_aufbau_'+(i+1)+'.jpg')));
+  (e.bilderEinleuchten||[]).forEach((src,i)=> files.push(dataURLtoFile(src, 'kreis_'+(e.kreis||'x')+'_einleuchten_'+(i+1)+'.jpg')));
   try{
     if(navigator.canShare && files.length && navigator.canShare({files})){
       await navigator.share({files:files, title:'Lichtdoku – Kreis '+e.kreis, text:text});

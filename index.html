@@ -227,7 +227,7 @@
 
 <script>
 /* ===================== Version & Updates ===================== */
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1';
 
 function registerServiceWorker(){
   if(!('serviceWorker' in navigator)) return;
@@ -531,15 +531,34 @@ function requestDriveToken(silent){
   });
 }
 
+/* Findet den Drive-Ordner "Lichtdoku Sync". Wichtig: Wenn zwei Geräte kurz
+   nacheinander zum ALLERERSTEN Mal verbinden, kann es (Netzwerk-Timing)
+   passieren, dass beide je einen eigenen Ordner anlegen, bevor der erste
+   sichtbar war. Damit landen beide Geräte dauerhaft in unterschiedlichen
+   Ordnern und "sehen" sich nie – genau das Symptom "Dokus/Fotos fehlen
+   komplett auf einem Gerät". Deshalb: bei jedem App-Start einmal alle
+   Ordner mit diesem Namen auflisten, den ÄLTESTEN als verbindlich wählen
+   (alle Geräte kommen so auf denselben Ordner) und etwaige jüngere
+   Duplikate automatisch leerräumen (Dateien verschieben, Ordner löschen). */
+let driveFolderVerifiedThisSession = false;
 async function ensureDriveFolder(){
-  if(driveSync.folderId) return driveSync.folderId;
   const token = await requestDriveToken(true);
+  if(driveSync.folderId && driveFolderVerifiedThisSession) return driveSync.folderId;
+  if(driveSync.folderId && !driveFolderVerifiedThisSession){
+    try{
+      const checkRes = await fetch(DRIVE_API+'/files/'+driveSync.folderId+'?fields=id,trashed', { headers:{ Authorization:'Bearer '+token } });
+      if(checkRes.ok){
+        const info = await checkRes.json();
+        if(!info.trashed){ driveFolderVerifiedThisSession = true; return driveSync.folderId; }
+      }
+    }catch(e){ /* Netzwerkfehler: mit gecachter ID weitermachen, kein Reset */ return driveSync.folderId; }
+    driveSync.folderId = null; // Ordner existiert nicht mehr (z.B. konsolidiert) -> neu ermitteln
+  }
   const q = encodeURIComponent("name='"+DRIVE_FOLDER_NAME+"' and mimeType='application/vnd.google-apps.folder' and trashed=false");
-  const res = await fetch(DRIVE_API+'/files?q='+q+'&fields=files(id,name)', { headers:{ Authorization:'Bearer '+token } });
+  const res = await fetch(DRIVE_API+'/files?q='+q+'&orderBy=createdTime&fields=files(id,name,createdTime)', { headers:{ Authorization:'Bearer '+token } });
   const data = await res.json();
-  if(data.files && data.files.length){
-    driveSync.folderId = data.files[0].id;
-  } else {
+  const folders = data.files || [];
+  if(folders.length === 0){
     const createRes = await fetch(DRIVE_API+'/files', {
       method:'POST',
       headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
@@ -547,9 +566,40 @@ async function ensureDriveFolder(){
     });
     const created = await createRes.json();
     driveSync.folderId = created.id;
+  } else {
+    driveSync.folderId = folders[0].id; // älteste = verbindlich für alle Geräte
+    if(folders.length > 1){
+      consolidateDuplicateFolders(folders[0].id, folders.slice(1), token).catch(err=>{
+        console.error('Ordner-Konsolidierung fehlgeschlagen', err);
+      });
+    }
   }
+  driveFolderVerifiedThisSession = true;
   saveDriveSettings();
   return driveSync.folderId;
+}
+
+/* Räumt doppelte "Lichtdoku Sync"-Ordner auf: verschiebt alle Dateien in den
+   verbindlichen (ältesten) Ordner (bestehende Dateien mit gleichem Namen dort
+   gewinnen, das Duplikat wird verworfen) und löscht die leeren Duplikat-Ordner. */
+async function consolidateDuplicateFolders(canonicalId, duplicates, token){
+  for(const dup of duplicates){
+    try{
+      const listRes = await fetch(DRIVE_API+'/files?q='+encodeURIComponent("'"+dup.id+"' in parents and trashed=false")+'&fields=files(id,name)', { headers:{ Authorization:'Bearer '+token } });
+      const listData = await listRes.json();
+      const files = listData.files || [];
+      for(const f of files){
+        const checkQ = encodeURIComponent("name='"+f.name.replace(/'/g,"\\'")+"' and '"+canonicalId+"' in parents and trashed=false");
+        const checkRes = await fetch(DRIVE_API+'/files?q='+checkQ+'&fields=files(id)', { headers:{ Authorization:'Bearer '+token } });
+        const checkData = await checkRes.json();
+        if(checkData.files && checkData.files.length) continue; // liegt im Zielordner schon vor
+        await fetch(DRIVE_API+'/files/'+f.id+'?addParents='+canonicalId+'&removeParents='+dup.id, {
+          method:'PATCH', headers:{ Authorization:'Bearer '+token }
+        });
+      }
+      await fetch(DRIVE_API+'/files/'+dup.id, { method:'DELETE', headers:{ Authorization:'Bearer '+token } });
+    }catch(err){ console.error('Konsolidierung fehlgeschlagen für Ordner', dup.id, err); }
+  }
 }
 
 async function connectDriveFlow(){
@@ -623,22 +673,29 @@ async function uploadShowToDrive(showId, token){
     if(searchData.files && searchData.files.length) fileId = searchData.files[0].id;
   }
   let entries = loadEntries(showId);
+  let deletedIds = show.deletedIds || [];
   /* Bevor wir schreiben: aktuellen Drive-Stand holen und mit dem lokalen Stand
      zusammenführen (pro Eintrags-ID gewinnt der neuere "updatedAt"-Wert). So
      überschreibt ein Gerät nicht die Änderungen eines anderen Geräts, das
-     zwischenzeitlich ebenfalls synchronisiert hat. */
+     zwischenzeitlich ebenfalls synchronisiert hat. Gelöschte Einträge werden
+     über "deletedIds" (Tombstones) auf beiden Seiten berücksichtigt, damit ein
+     lokal gelöschter Kreis nicht durch den Merge aus der Drive-Version wieder
+     auftaucht. */
   if(fileId){
     try{
       const remoteRes = await fetch(DRIVE_API+'/files/'+fileId+'?alt=media', { headers:{ Authorization:'Bearer '+token } });
       if(remoteRes.ok){
         const remotePayload = await remoteRes.json();
         if(remotePayload && Array.isArray(remotePayload.entries)){
-          entries = mergeEntryArrays(remotePayload.entries, entries);
+          const remoteDeleted = (remotePayload.show && remotePayload.show.deletedIds) || [];
+          deletedIds = Array.from(new Set([...deletedIds, ...remoteDeleted]));
+          entries = mergeEntryArrays(remotePayload.entries, entries, deletedIds);
           saveEntries(showId, entries);
         }
       }
     }catch(e){ /* falls das fehlschlägt, normal mit lokalem Stand weiterschreiben */ }
   }
+  show.deletedIds = deletedIds;
   const metadata = fileId ? {} : { name:fileName, parents:[folderId] };
   const initUrl = fileId
     ? DRIVE_UPLOAD_API+'/files/'+fileId+'?uploadType=resumable'
@@ -659,13 +716,16 @@ async function uploadShowToDrive(showId, token){
   if(idx>=0){
     shows2[idx].driveFileId = putData.id;
     shows2[idx].driveKnownModified = Date.now();
+    shows2[idx].deletedIds = deletedIds;
     saveShows(shows2);
   }
 }
-function mergeEntryArrays(remoteEntries, localEntries){
+function mergeEntryArrays(remoteEntries, localEntries, deletedIds){
+  const deletedSet = new Set(deletedIds||[]);
   const map = new Map();
-  (remoteEntries||[]).forEach(e=> map.set(e.id, e));
+  (remoteEntries||[]).forEach(e=>{ if(!deletedSet.has(e.id)) map.set(e.id, e); });
   (localEntries||[]).forEach(e=>{
+    if(deletedSet.has(e.id)) return;
     const ex = map.get(e.id);
     if(!ex || (e.updatedAt||e.createdAt||0) >= (ex.updatedAt||ex.createdAt||0)) map.set(e.id, e);
   });
@@ -750,12 +810,16 @@ async function pullOneFile(f, token){
     const payload = await res.json();
     if(!payload.show || !payload.entries) return;
     const {migrated} = migrateEntryArray(payload.entries);
+    const remoteDeleted = payload.show.deletedIds || [];
+    const localDeleted = (localShow && localShow.deletedIds) || [];
+    const allDeleted = new Set([...remoteDeleted, ...localDeleted]);
+    const filtered = migrated.filter(e=>!allDeleted.has(e.id));
     const shows2 = loadShows();
     const idx = shows2.findIndex(s=>s.id===showId);
-    const mergedShow = Object.assign({}, payload.show, { id:showId, driveFileId:f.id, driveKnownModified:remoteTime });
+    const mergedShow = Object.assign({}, payload.show, { id:showId, driveFileId:f.id, driveKnownModified:remoteTime, deletedIds:Array.from(allDeleted) });
     if(idx>=0) shows2[idx] = mergedShow; else shows2.push(mergedShow);
     saveShows(shows2);
-    saveEntries(showId, migrated);
+    saveEntries(showId, filtered);
   }catch(err){ console.error('Pull fehlgeschlagen für', showId, err); }
 }
 
@@ -800,6 +864,85 @@ function driveStatusText(){
 function driveIconTap(){
   if(!driveSync.connected) connectDriveFlow();
   else syncNowManual();
+}
+
+/* ===================== Diagnose ===================== */
+/* Zeigt ungeschönt, was lokal vorhanden ist und was auf Drive liegt –
+   inkl. Erkennung doppelter "Lichtdoku Sync"-Ordner (die Hauptursache für
+   komplett fehlende Dokus/Fotos auf einzelnen Geräten). */
+let diagData = null;
+function openDiagnostics(){
+  state.view = 'diag';
+  diagData = null;
+  renderApp();
+  loadDiagnostics();
+}
+async function loadDiagnostics(){
+  const result = { error:null, folders:[], canonicalId:driveSync.folderId, localShows:[] };
+  try{
+    result.localShows = loadShows().map(s=>({
+      id:s.id, name:s.name, count:loadEntries(s.id).length,
+      deleted:(s.deletedIds||[]).length, driveFileId:s.driveFileId||null
+    }));
+    if(driveSync.connected){
+      const token = await requestDriveToken(true);
+      const q = encodeURIComponent("name='"+DRIVE_FOLDER_NAME+"' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+      const res = await fetch(DRIVE_API+'/files?q='+q+'&orderBy=createdTime&fields=files(id,name,createdTime)', { headers:{ Authorization:'Bearer '+token } });
+      const data = await res.json();
+      result.folders = data.files || [];
+      for(const f of result.folders){
+        const lr = await fetch(DRIVE_API+'/files?q='+encodeURIComponent("'"+f.id+"' in parents and trashed=false")+'&fields=files(id,name,modifiedTime)', { headers:{ Authorization:'Bearer '+token } });
+        const ld = await lr.json();
+        f.fileList = ld.files || [];
+      }
+    }
+  }catch(err){ result.error = String(err && err.message || err); }
+  diagData = result;
+  if(state.view === 'diag') renderApp();
+}
+async function repairNow(){
+  toast('Prüfe & räume auf…');
+  driveFolderVerifiedThisSession = false;
+  driveSync.folderId = null;
+  try{ await ensureDriveFolder(); await pullAllShows(); }catch(err){ console.error(err); }
+  toast('Fertig');
+  loadDiagnostics();
+}
+function renderDiag(){
+  let html = '<div class="topbar"><button class="iconbtn" onclick="backHome()">←</button><h1>🔧 Diagnose</h1></div>';
+  html += '<div class="content">';
+  if(!diagData){
+    html += '<div class="empty-hint">Lade Diagnosedaten…</div>';
+  } else if(diagData.error){
+    html += '<div class="empty-hint">Fehler beim Laden: '+escapeHtml(diagData.error)+'</div>';
+  } else {
+    html += '<label style="margin-top:0;">Lokale Dokumentationen (dieses Gerät)</label>';
+    if(diagData.localShows.length === 0){ html += '<div class="empty-hint">Keine</div>'; }
+    diagData.localShows.forEach(s=>{
+      html += '<div class="show-item"><div class="meta"><div class="name">'+escapeHtml(s.name)+'</div>';
+      html += '<div class="count">'+s.count+' Kreis(e)'+(s.deleted?' · '+s.deleted+' gelöscht':'')+' · Drive: '+(s.driveFileId? s.driveFileId.slice(0,8)+'…':'noch nicht hochgeladen')+'</div></div></div>';
+    });
+    html += '<label>Drive-Ordner „'+DRIVE_FOLDER_NAME+'"</label>';
+    if(!driveSync.connected){
+      html += '<div class="empty-hint">Nicht verbunden</div>';
+    } else if(diagData.folders.length > 1){
+      html += '<div style="color:var(--danger);font-weight:700;margin-bottom:10px;">⚠️ '+diagData.folders.length+' Ordner mit diesem Namen gefunden – das erklärt fehlende Daten. Wird automatisch zusammengeführt, sobald ein Gerät synchronisiert.</div>';
+    } else if(diagData.folders.length === 1){
+      html += '<div style="color:var(--ok);font-weight:700;margin-bottom:10px;">✅ Nur ein Ordner gefunden – in Ordnung.</div>';
+    }
+    diagData.folders.forEach(f=>{
+      const isCanon = f.id === diagData.canonicalId;
+      html += '<div class="show-item"><div class="meta"><div class="name">'+(isCanon?'✅':'⚠️')+' '+f.id.slice(0,12)+'… '+(isCanon?'(verbindlich)':'(Duplikat)')+'</div>';
+      const names = f.fileList.map(x=>x.name).join(', ') || '–';
+      html += '<div class="count">'+f.fileList.length+' Datei(en): '+escapeHtml(names)+'</div></div></div>';
+    });
+  }
+  html += '<div class="form-actions" style="margin-top:22px;">';
+  html += '<button class="btn-primary" onclick="repairNow()">🔧 Jetzt prüfen &amp; reparieren</button>';
+  html += '<button onclick="openDiagnostics()">🔄 Neu laden</button>';
+  html += '</div>';
+  html += '</div>';
+  byId('app').innerHTML = html;
 }
 let lastHomePullAttempt = 0;
 function maybeAutoPullOnHome(){
@@ -1214,6 +1357,7 @@ function cardTemplate(entry, kat, opts){
 function renderApp(){
   if(state.view === 'home') renderHome();
   else if(state.view === 'show') renderShow();
+  else if(state.view === 'diag') renderDiag();
 }
 
 /* ---- Home ---- */
@@ -1231,7 +1375,7 @@ function renderHome(){
   html += '<div class="show-item" style="margin-bottom:18px;">';
   if(driveSync.connected){
     html += '<div class="meta"><div class="name">☁️ Drive-Sync aktiv</div><div class="count">'+driveStatusText()+'</div></div>';
-    html += '<div class="show-actions"><button onclick="syncNowManual()">🔄</button><button class="btn-danger" onclick="disconnectDrive()">Trennen</button></div>';
+    html += '<div class="show-actions"><button onclick="syncNowManual()">🔄</button><button onclick="openDiagnostics()">🔧</button><button class="btn-danger" onclick="disconnectDrive()">Trennen</button></div>';
   } else {
     html += '<div class="meta"><div class="name">☁️ Drive-Sync</div><div class="count">Automatische Sicherung & Offline-Zugriff auf allen Geräten</div></div>';
     html += '<div class="show-actions"><button class="btn-primary" onclick="connectDriveFlow()">Verbinden</button></div>';
@@ -1446,6 +1590,12 @@ function deleteEntry(id){
   let entries = loadEntries(state.showId);
   entries = entries.filter(e=>e.id!==id);
   saveEntries(state.showId, entries);
+  const shows = loadShows();
+  const idx = shows.findIndex(s=>s.id===state.showId);
+  if(idx>=0){
+    shows[idx].deletedIds = Array.from(new Set([...(shows[idx].deletedIds||[]), id]));
+    saveShows(shows);
+  }
   markShowDirty(state.showId);
   renderApp();
 }
